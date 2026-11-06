@@ -1,0 +1,7 @@
+# src/main/resources/application.yml
+openai:
+  api-key: "sk-proj-본인의_실제_API_키를_여기에_입력하세요"
+  model: "gpt-4o-mini"
+  api-url: "https://api.openai.com/v1/chat/completions"
+
+#추후 추가할 예정, 추가 이후에는 gitignore을 활용해 따로 제외 필요
