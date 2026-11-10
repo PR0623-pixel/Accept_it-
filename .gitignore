@@ -1,2 +1,12 @@
 AcceptIt_Unity/
 .gradle/
+
+### IntelliJ IDEA ###
+.idea/
+*.iws
+*.iml
+*.ipr
+out/
+
+### VS Code ###
+.vscode/
