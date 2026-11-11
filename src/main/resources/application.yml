@@ -1,6 +1,6 @@
 # src/main/resources/application.yml
 openai:
-  api-key: "sk-proj-본인의_실제_API_키를_여기에_입력하세요"
+  api-key: ${OPENAI_API_KEY:}
   model: "gpt-4o-mini"
   api-url: "https://api.openai.com/v1/chat/completions"
 
