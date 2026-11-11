@@ -99,5 +99,5 @@ export default function RoomPage() {
         <button className="btn big" onClick={toggleReady}>{me.ready ? '준비 취소' : 'READY'}</button>
       </div>
     </div>
-  );
+  )
 }

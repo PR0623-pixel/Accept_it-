@@ -13,7 +13,7 @@ interface Props { room: RoomState; messages: ChatMessage[]; myId: string }
 
 /**
  * 인게임 장면: 배경(회의실) + 테이블 + 캐릭터 3명 + 화이트보드(물품 정보) + 연출.
- * 객원 2명은 좌/우 (squirrel), 사회자는 가운데 (bird). 서로 마주보도록 좌측은 right 스프라이트, 우측은 left 스프라이트.
+ * 객원 2명은 좌/우 (squirrel), 사회자는 가운데 (bird).
  * 배경을 일러스트로 교체하려면 index.css 의 .scene 에 background-image 를 지정하고 .wall/.floor/.table 을 지우면 됩니다.
  */
 export default function Scene({ room, messages, myId }: Props) {
