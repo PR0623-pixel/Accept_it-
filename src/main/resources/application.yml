@@ -21,7 +21,13 @@ spring:
 
 openai:
   api-key: ${OPENAI_API_KEY:}
-  model: "gpt-4o-mini"
+  model: ${OPENAI_MODEL:gpt-4o-mini}
   api-url: "https://api.openai.com/v1/chat/completions"
 
 #추후 추가할 예정, 추가 이후에는 gitignore을 활용해 따로 제외 필요
+server:
+  error:
+    include-message: never
+    include-binding-errors: never
+    include-stacktrace: never
+    include-exception: false

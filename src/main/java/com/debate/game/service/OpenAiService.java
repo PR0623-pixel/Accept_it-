@@ -1,6 +1,9 @@
 
 package com.debate.game.service;
 
+import com.debate.game.exception.AiConfigurationException;
+import com.debate.game.exception.AiServiceException;
+import org.springframework.web.client.RestClientException;
 import org.springframework.beans.factory.annotation.Value;
 import org.springframework.http.HttpEntity;
 import org.springframework.http.HttpHeaders;
@@ -15,7 +18,7 @@ import java.util.Map;
 @Service
 public class OpenAiService {
 
-    @Value("${openai.api-key}")
+    @Value("${openai.api-key:}")
     private String apiKey;
 
     @Value("${openai.model}")
@@ -27,6 +30,9 @@ public class OpenAiService {
     private final RestTemplate restTemplate = new RestTemplate();
 
     public String generateSituationCards(String topic, int maxPickCount) {
+        if (apiKey == null || apiKey.isBlank() || model == null || model.isBlank()) {
+            throw new AiConfigurationException();
+        }
 
         String systemPrompt =
                 "너는 정책 심의 토론 게임의 상황 카드 생성기야. " +
@@ -50,21 +56,28 @@ public class OpenAiService {
         HttpEntity<Map<String, Object>> entity =
                 new HttpEntity<>(requestBody, headers);
 
-        Map<?, ?> response =
-                restTemplate.postForObject(apiUrl, entity, Map.class);
+        Map<?, ?> response;
+        try {
+            response = restTemplate.postForObject(apiUrl, entity, Map.class);
+        } catch (RestClientException e) {
+            throw new AiServiceException("AI request failed.", e);
+        }
 
         if (response == null ||
                 !(response.get("choices") instanceof List<?> choices) ||
                 choices.isEmpty()) {
-            throw new IllegalStateException("AI 응답이 비어 있습니다.");
+            throw new AiServiceException("AI 응답이 비어 있습니다.");
         }
 
         if (!(choices.get(0) instanceof Map<?, ?> choice) ||
                 !(choice.get("message") instanceof Map<?, ?> message) ||
                 !(message.get("content") instanceof String content)) {
-            throw new IllegalStateException("AI 응답 형식이 올바르지 않습니다.");
+            throw new AiServiceException("AI 응답 형식이 올바르지 않습니다.");
         }
 
+        if (content.isBlank()) {
+            throw new AiServiceException("AI response content is empty.");
+        }
         return content;
     }
 }

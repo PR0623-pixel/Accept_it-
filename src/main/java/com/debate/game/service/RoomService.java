@@ -1,5 +1,7 @@
 package com.debate.game.service;
 
+import com.debate.game.exception.InvalidRoomCodeException;
+import com.debate.game.exception.RoomFullException;
 import com.debate.game.entity.Player;
 import com.debate.game.entity.Room;
 import com.debate.game.entity.enums.DebateRole;
@@ -36,12 +38,12 @@ public class RoomService {
     @Transactional
     public Long joinRoom(String roomCode, String playerName) {
         Room room = roomRepository.findByRoomCode(roomCode)
-                .orElseThrow(() -> new IllegalArgumentException("존재하지 않는 방 코드입니다."));
+                .orElseThrow(() -> new InvalidRoomCodeException("존재하지 않는 방 코드입니다."));
 
         // 현재 방의 인원 수 확인 (3명 제한)
         long currentPlayerCount = playerRepository.countByRoom(room);
         if (currentPlayerCount >= 3) {
-            throw new IllegalStateException("방 인원이 초과되었습니다. (최대 3명)"); // 에러 발생
+            throw new RoomFullException("방 인원이 초과되었습니다. (최대 3명)"); // 에러 발생
         }
 
         Player player = new Player();
