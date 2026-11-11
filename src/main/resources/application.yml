@@ -1,5 +1,24 @@
 # src/main/resources/application.yml
 
+# Spring Boot Actuator
+management:
+  endpoints:
+    web:
+      exposure:
+        include: health
+
+  endpoint:
+    health:
+      show-details: never
+      show-components: never
+      group:
+        database:
+          include: db
+
+  health:
+    db:
+      enabled: true
+
 spring:
   application:
     name: AcceptIt
