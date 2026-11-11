@@ -1,5 +1,11 @@
+### Unity project ###
 AcceptIt_Unity/
+
+### Gradle ###
 .gradle/
+
+### build ###
+**/build/
 
 ### IntelliJ IDEA ###
 .idea/
@@ -10,3 +16,22 @@ out/
 
 ### VS Code ###
 .vscode/
+
+### env ###
+.env
+.env.*
+!.env.example
+
+### local spring boot options ###
+application-local.yml
+application-local.yaml
+application-local.properties
+
+### logs and temp files ###
+*.log
+logs/
+*.tmp
+
+### OS Files ###
+.DS_Store
+Thumbs.db
