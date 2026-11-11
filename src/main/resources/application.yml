@@ -1,4 +1,21 @@
 # src/main/resources/application.yml
+
+spring:
+  application:
+    name: AcceptIt
+
+  datasource:
+    url: jdbc:mysql://localhost:3306/${DB_NAME:acceptit_db}
+    username: ${DB_USER}
+    password: ${DB_PASSWORD}
+    driver-class-name: com.mysql.cj.jdbc.Driver
+
+  jpa:
+    hibernate:
+      ddl-auto: none
+    show-sql: false
+    open-in-view: false
+
 openai:
   api-key: ${OPENAI_API_KEY:}
   model: "gpt-4o-mini"
