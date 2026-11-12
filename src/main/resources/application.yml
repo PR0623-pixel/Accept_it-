@@ -50,3 +50,13 @@ server:
     include-binding-errors: never
     include-stacktrace: never
     include-exception: false
+
+# Swagger/OpenAPI for local development (set SWAGGER_ENABLED=false to disable).
+springdoc:
+  api-docs:
+    enabled: ${SWAGGER_ENABLED:true}
+  swagger-ui:
+    enabled: ${SWAGGER_ENABLED:true}
+    path: /swagger-ui.html
+  packages-to-scan: com.debate.game.controller
+  paths-to-match: /api/**
