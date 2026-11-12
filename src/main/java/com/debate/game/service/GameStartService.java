@@ -45,6 +45,8 @@ public class GameStartService {
 
         // 2. 방 상태를 '진행중'으로 변경
         room.setStatus(RoomStatus.IN_PROGRESS);
+        // 토론은 찬성 진영부터 시작하며, 이후 발언마다 반대 진영과 교대한다.
+        room.setCurrentTurnRole(DebateRole.PRO);
 
         // 3. AI를 통한 상황 카드 생성 및 분배 (최대 카드 매수 5장)
         generateAndDistributeCards(room);

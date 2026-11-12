@@ -1,6 +1,7 @@
 package com.debate.game.entity;
 
 import com.debate.game.entity.enums.RoomStatus;
+import com.debate.game.entity.enums.DebateRole;
 import jakarta.persistence.*;
 import lombok.Getter;
 import lombok.Setter;
@@ -27,4 +28,8 @@ public class Room {
 
     @Enumerated(EnumType.STRING)
     private RoomStatus status = RoomStatus.WAITING;
+
+    // 진행 중인 토론에서 다음 발언 권한을 가진 진영이며, 시작 전·종료 후에는 null이다.
+    @Enumerated(EnumType.STRING)
+    private DebateRole currentTurnRole;
 }
