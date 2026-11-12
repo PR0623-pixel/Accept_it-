@@ -16,7 +16,9 @@ public class Room {
     private String roomCode;
 
     private String currentTopic; // 현재 방의 토론 주제
-    
+
+    private int maxCardCount; // 받는 카드 수 제한
+
     private int turnTimeLimit; // 턴 시간 제한 (3~20분)
 
     @ManyToOne(fetch = FetchType.LAZY)

@@ -6,5 +6,10 @@ import lombok.Getter;
 @Getter
 @AllArgsConstructor
 public class ErrorResponse {
+    private String code;
     private String errorMessage;
+
+    public ErrorResponse(String errorMessage) {
+        this("UNKNOWN_ERROR", errorMessage);
+    }
 }

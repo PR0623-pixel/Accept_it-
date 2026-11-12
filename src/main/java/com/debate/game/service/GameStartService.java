@@ -11,8 +11,6 @@ import com.debate.game.repository.SituationCardRepository;
 import lombok.RequiredArgsConstructor;
 import org.springframework.stereotype.Service;
 import org.springframework.transaction.annotation.Transactional;
-import com.fasterxml.jackson.core.type.TypeReference;
-import com.fasterxml.jackson.databind.ObjectMapper;
 
 import java.util.List;
 
@@ -24,7 +22,6 @@ public class GameStartService {
     private final PlayerRepository playerRepository;
     private final SituationCardRepository cardRepository;
     private final OpenAiService openAiService;
-    private final ObjectMapper objectMapper;
 
     @Transactional
     public void tryStartGame(Long roomId) {
@@ -56,7 +53,6 @@ public class GameStartService {
     private void generateAndDistributeCards(Room room) {
         // TODO: 향후 OpenAI API를 호출하여 해당 쟁점(Topic)에 맞는 텍스트를 받아오는 부분
         // 지금은 하드코딩으로 찬성측 5장, 반대측 5장 더미 데이터를 DB에 넣어줍니다.
-        String topic = room.petPolicyTopic();
         int maxPickCount = 5; // 다이어그램의 최대 뽑을 수 (5개)
 
         for (int i = 0; i < maxPickCount; i++) {
