@@ -134,8 +134,10 @@ export interface Card {
   description: string; // situation_card.description (카드에 마우스를 올리면 표시)
   used: boolean; // 이미 사용한 카드. 사용 즉시 서버가 true 로 바꿔 HAND 재전송
 }
-
-export type ChatKind = 'SPEECH' | 'REBUTTAL' | 'SYSTEM';
+// 변경 전
+//export type ChatKind = 'SPEECH' | 'REBUTTAL' | 'SYSTEM';
+// 변경 후
+export type ChatKind = 'SPEECH' | 'REBUTTAL' | 'MODERATOR' | 'SYSTEM';
 /** 채팅/로그 한 줄 (DB: debate_log 에 저장하면 좋음) */
 export interface ChatMessage {
   id: string;

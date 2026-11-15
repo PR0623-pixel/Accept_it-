@@ -18,6 +18,7 @@ function Shell() {
   const roomCode = useGameStore((s) => s.roomCode);
   const error = useGameStore((s) => s.error);
   const clearError = useGameStore((s) => s.clearError);
+  const myId = useGameStore((s) => s.myId);
 
   // 서버가 알려준 phase 에 맞춰 페이지를 자동 전환 (프론트가 직접 화면을 넘기지 않음)
   useEffect(() => {
@@ -39,7 +40,10 @@ function Shell() {
       <Routes>
         <Route path="/" element={<MainPage />} />
         <Route path="/room" element={<RoomPage />} />
-        <Route path="/game" element={<GamePage />} />
+        {/* // 변경 전
+        // <Route path="/game" element={<GamePage />} />
+        // 변경 후 */}
+        <Route path="/game" element={<GamePage key={myId} />} />
         <Route path="/result" element={<ResultPage />} />
       </Routes>
       {error && <div className="toast" onClick={clearError}>⚠ {error}</div>}

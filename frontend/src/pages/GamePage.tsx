@@ -13,6 +13,8 @@ function ChatLog({ messages }: { messages: ChatMessage[] }) {
     <div className="log">
       {messages.map((m) => m.kind === 'SYSTEM'
         ? <div key={m.id} className="msg sys">{m.text}</div>
+        : m.kind === 'MODERATOR'                                                                  // ← 추가
+        ? <div key={m.id} className="msg mod"><b>[사회자]</b> {m.nickname}: {m.text}</div>       // ← 추가
         : <div key={m.id} className="msg">
             <b className={m.stance === 'PRO' ? 'pro' : 'con'}>[{m.stance ? STANCE[m.stance] : ''}{m.kind === 'REBUTTAL' ? ' 반론' : ''}]</b> {m.nickname}: {m.text}
             {m.keyword && <i className="kw"> #{m.keyword}</i>}
@@ -46,13 +48,19 @@ export default function GamePage() {
   const myId = useGameStore((s) => s.myId);
   const send = useGameStore((s) => s.send);
   const me = useMe();
-  const [card, setCard] = useState<number | null>(null);
-  const [text, setText] = useState('');
-  useEffect(() => setCard(null), [room?.currentItem?.index]); // 물품이 바뀌면 선택 해제
+  // 시점(플레이어)마다 입력 중인 글과 선택한 카드를 따로 보관
+  const [drafts, setDrafts] = useState<Record<string, string>>({});
+  const [cards, setCards] = useState<Record<string, number | null>>({});
+  const text = drafts[myId] ?? '';
+  const card = cards[myId] ?? null;
+  const setText = (v: string) => setDrafts((d) => ({ ...d, [myId]: v }));
+  const setCard = (v: number | null) => setCards((c) => ({ ...c, [myId]: v }));
+  useEffect(() => setCards({}), [room?.currentItem?.index]); // 물품이 바뀌면 모든 선택 해제
   if (!room || !me) return null;
 
   const isGuest = me.role === 'GUEST', isMod = me.role === 'MODERATOR';
   const iSpeak = room.speech?.speakerId === me.id;
+  const canChat = iSpeak || isMod; // 사회자는 항상 채팅 가능
   const pending = room.pendingRebuttal;
   const debating = room.phase === 'DEBATE';
 
@@ -68,7 +76,7 @@ export default function GamePage() {
 
   const submit = (e: FormEvent) => {
     e.preventDefault();
-    if (!text.trim() || !iSpeak) return;
+    if (!text.trim() || !canChat) return;
     // [BACKEND] SEND_CHAT: 발언권(speech.speakerId) 보유자만 가능. 서버가 CHAT 브로드캐스트 + debate_log 저장.
     send({ type: 'SEND_CHAT', payload: { text } });
     setText('');
@@ -127,9 +135,9 @@ export default function GamePage() {
           </div>
 
           <form className="chat-input" onSubmit={submit}>
-            <input value={text} disabled={!iSpeak} maxLength={200} onChange={(e) => setText(e.target.value)}
-              placeholder={iSpeak ? '발언 내용을 입력하세요' : '발언권이 있을 때만 입력할 수 있어요'} />
-            <button className="btn" disabled={!iSpeak || !text.trim()}>보내기</button>
+            <input value={text} disabled={!canChat} maxLength={200} onChange={(e) => setText(e.target.value)}
+              placeholder={isMod ? '사회자 메시지 (언제든 입력 가능)' : iSpeak ? '발언 내용을 입력하세요' : '발언권이 있을 때만 입력할 수 있어요'} />
+            <button className="btn" disabled={!canChat || !text.trim()}>보내기</button>
           </form>
         </section>
       </div>

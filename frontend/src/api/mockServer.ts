@@ -44,6 +44,7 @@ class MockServer {
   private viewerId = '';
   private seq = 1;
   private ticker?: number;
+  private pendingCard: { playerId: string; cardId: number } | null = null; // 반론에 쓴 카드 (묵살 시 환원용)
 
   // ---- REST 흉내 -----------------------------------------------------------
   createRoom(nickname: string) {
@@ -115,19 +116,34 @@ class MockServer {
   private startItem(index: number) {
     const r = this.room!;
     r.phase = 'VOTING'; r.currentItem = this.items[index - 1]; r.itemEndsAt = null;
-    r.speech = null; r.lastSpeakerId = null; r.pendingRebuttal = null;
+    r.speech = null; r.lastSpeakerId = null; r.pendingRebuttal = null; this.pendingCard = null;//물품이 바뀔 때 초기화
     r.players.forEach((p) => { p.stance = null; p.hasVoted = false; });
     this.chat = [];
     this.listener?.({ type: 'CHAT_HISTORY', payload: [] });
     this.hands.clear();
     r.players.forEach((p) => this.hands.set(p.id, p.role === 'GUEST' ? this.deal(r.settings.cardsPerItem) : []));
     this.say(`물품 ${index}/${r.settings.maxItems}: ${r.currentItem.name} — 찬성/반대를 선택하세요.`);
+    
+  }
+  /** 객원 중 한 명이라도 키워드 카드를 모두 소진하면 시간과 상관없이 사회자 결정으로 넘어간다.
+ *  발언을 끊지 않도록 "발언권이 비는 순간"에만 검사한다. */
+  private checkExhausted(): boolean {
+    const r = this.room!;
+    if (r.phase !== 'DEBATE' || r.speech || r.pendingRebuttal) return false;
+    const out = r.players.find((p) => p.role === 'GUEST' && (this.hands.get(p.id) ?? []).every((c) => c.used));
+    if (!out) return false;
+    r.phase = 'MODERATOR_DECISION';
+    this.say(`${out.nickname}님이 키워드 카드를 모두 사용했습니다. 사회자의 결정으로 넘어갑니다.`);
+    return true;
   }
   /** [BACKEND] 서버에서는 @Scheduled 또는 방별 타이머로 구현. 시간 종료는 서버가 직접 판단해야 합니다. */
   private tick() {
     const r = this.room; if (!r) return;
     const now = Date.now(); let changed = false;
-    if (r.speech && now >= r.speech.endsAt) { r.speech = null; changed = true; }
+    // 변경 전
+    //if (r.speech && now >= r.speech.endsAt) { r.speech = null; changed = true; }
+    // 변경 후
+    if (r.speech && now >= r.speech.endsAt) { r.speech = null; this.checkExhausted(); changed = true; }
     if (r.phase === 'DEBATE' && r.itemEndsAt && now >= r.itemEndsAt) {
       r.phase = 'MODERATOR_DECISION'; r.speech = null; r.pendingRebuttal = null;
       this.say('시간 종료! 사회자가 물품의 입건 여부를 결정합니다.'); changed = true;
@@ -203,14 +219,20 @@ class MockServer {
         break;
       }
       case 'SEND_CHAT': {
-        if (!r.speech || r.speech.speakerId !== me.id) return this.fail('NOT_YOUR_TURN', '발언권이 있을 때만 말할 수 있습니다.');
         const text = ev.payload.text.trim().slice(0, 200);
         if (!text) return;
+        if (me.role === 'MODERATOR') {
+          // 사회자는 발언권과 상관없이 게임 중 언제든 채팅 가능
+          if (r.phase === 'LOBBY' || r.phase === 'RESULT') return this.fail('INVALID', '게임 중에만 채팅할 수 있습니다.');
+          this.push({ kind: 'MODERATOR', senderId: me.id, nickname: me.nickname, text });
+          return;
+        }
+        if (!r.speech || r.speech.speakerId !== me.id) return this.fail('NOT_YOUR_TURN', '발언권이 있을 때만 말할 수 있습니다.');
         this.push({ kind: r.speech.kind, senderId: me.id, nickname: me.nickname, stance: me.stance ?? undefined, text, keyword: r.speech.keyword });
         return; // 상태 변화 없음 → ROOM_STATE 재전송 불필요
       }
       case 'END_SPEECH': {
-        if (r.speech?.speakerId === me.id) r.speech = null;
+        if (r.speech?.speakerId === me.id) { r.speech = null; this.checkExhausted(); }
         break;
       }
       case 'REQUEST_REBUTTAL': {
@@ -220,6 +242,7 @@ class MockServer {
         const card = this.takeCard(me.id, ev.payload.cardId);
         if (!card) return this.fail('CARD_REQUIRED', '반론에 쓸 키워드 카드를 선택하세요.');
         r.pendingRebuttal = { requesterId: me.id, targetId: r.speech.speakerId, keyword: card.keyword };
+        this.pendingCard = { playerId: me.id, cardId: card.cardId }; // 묵살되면 이 카드를 돌려준다
         this.push({ kind: 'REBUTTAL', senderId: me.id, nickname: me.nickname, stance: me.stance ?? undefined, text: '(반론 요청 — 사회자 판단 대기)', keyword: card.keyword });
         break;
       }
@@ -227,14 +250,18 @@ class MockServer {
         const p = r.pendingRebuttal;
         if (me.role !== 'MODERATOR' || !p) return this.fail('INVALID', '결정할 반론 요청이 없습니다.');
         r.pendingRebuttal = null;
+        const pc = this.pendingCard; this.pendingCard = null;                                // ← 추가
         if (ev.payload.approve) {
           r.speech = { speakerId: p.requesterId, kind: 'REBUTTAL', endsAt: Date.now() + REBUTTAL_SECONDS * 1000, keyword: p.keyword };
-          r.lastSpeakerId = p.requesterId; // 기획 확인 필요: 반론 발언자도 "직전 발언자"로 취급
+          r.lastSpeakerId = p.requesterId;
           r.effect = { id: this.seq++, type: 'REBUTTAL_APPROVED', targetId: p.requesterId };
           this.say('사회자가 반론을 승인했습니다. 반론자에게 발언권 1분!');
         } else {
           r.effect = { id: this.seq++, type: 'REBUTTAL_DENIED', targetId: p.requesterId };
-          this.say('사회자가 반론을 묵살했습니다. 💢');
+          const back = pc && this.hands.get(pc.playerId)?.find((x) => x.cardId === pc.cardId); // ← 추가
+          if (back) back.used = false;                                                         // ← 추가 (카드 환원)
+          this.say('사회자가 반론을 묵살했습니다. 💢 (사용한 키워드 카드는 돌려받습니다)');   // ← 문구 변경
+          this.checkExhausted();                                                               // ← 추가
         }
         break;
       }

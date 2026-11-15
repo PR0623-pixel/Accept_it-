@@ -53,3 +53,10 @@
 3. 반론 요청이 사회자 결정을 기다리는 동안 기존 발언 타이머는 계속 흐릅니다.
 4. 찬/반 선택은 한 번 하면 바꿀 수 없고, 상대 의견은 둘 다 선택할 때까지 숨깁니다.
 5. 설정(물품 수/시간/카드 수)이 바뀌면 모든 READY 가 해제됩니다.
+
+## 5. 추가 규칙 (수정안 반영)
+1. 반론 묵살(DECIDE_REBUTTAL approve=false) 시, 요청자가 반론에 쓴 카드는 used=false 로 환원하고 요청자에게 HAND 를 다시 보낸다. 승인 시에만 소모된다.
+2. DEBATE 중 객원 중 한 명이라도 미사용 카드가 0장이면, 시간과 상관없이 phase=MODERATOR_DECISION 으로 전환한다.
+   검사 시점은 "발언권이 비는 순간"(END_SPEECH, speech.endsAt 만료, 반론 묵살 직후)이며, pendingRebuttal 이 있는 동안에는 검사하지 않는다.
+3. SEND_CHAT: 사회자는 phase 가 VOTING / DEBATE / MODERATOR_DECISION 일 때 발언권과 무관하게 항상 가능하다.
+   이때 ChatMessage.kind = 'MODERATOR' 로 브로드캐스트한다. 객원은 기존대로 발언권 보유자만 가능.
