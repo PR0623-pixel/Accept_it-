@@ -1,10 +1,15 @@
 package com.debate.game.websocket;
 
+import com.debate.game.websocket.InitialSyncProvider;
+import com.debate.game.dto.websocket.WebSocketMessage;
+
 import org.springframework.stereotype.Component;
 import org.springframework.web.socket.CloseStatus;
 import org.springframework.web.socket.TextMessage;
 import org.springframework.web.socket.WebSocketSession;
 import org.springframework.web.socket.handler.TextWebSocketHandler;
+
+import tools.jackson.databind.ObjectMapper;
 
 import java.io.IOException;
 import java.net.URI;
@@ -18,9 +23,13 @@ public class RoomWebSocketHandler extends TextWebSocketHandler {
     private static final String PLAYER_ID_ATTRIBUTE = "playerId";
 
     private final RoomSessionRegistry sessionRegistry;
+    private final InitialSyncProvider initialSyncProvider;
+    private final ObjectMapper objectMapper;
 
-    public RoomWebSocketHandler(RoomSessionRegistry sessionRegistry) {
+    public RoomWebSocketHandler(RoomSessionRegistry sessionRegistry, InitialSyncProvider initialSyncProvider, ObjectMapper objectMapper) {
         this.sessionRegistry = sessionRegistry;
+        this.initialSyncProvider = initialSyncProvider;
+        this.objectMapper = objectMapper;
     }
 
     @Override
@@ -34,11 +43,25 @@ public class RoomWebSocketHandler extends TextWebSocketHandler {
             session.close(CloseStatus.POLICY_VIOLATION);
             return;
         }
+        
+        var sync = initialSyncProvider.load(roomCode, playerId);
 
+        if (sync.isEmpty()){
+            sendError(session, "ROOM_NOT_FOUND",
+                    "방 또는 참가자를 찾을 수 없습니다.");
+            session.close(CloseStatus.POLICY_VIOLATION);
+            return;
+        }
+
+        //검증 및 조회 성공 시에만 세션 등록
         session.getAttributes().put(ROOM_CODE_ATTRIBUTE, roomCode);
         session.getAttributes().put(PLAYER_ID_ATTRIBUTE, playerId);
-
         sessionRegistry.register(roomCode, playerId, session);
+
+        //프론트 계약에 정해진 순서로 초기 상태 전달.
+        send(session, new WebSocketMessage<>("ROOM_STATE", sync.get().roomState()));
+        send(session, new WebSocketMessage<>("HAND", sync.get().hand()));
+        send(session, new WebSocketMessage<>("CHAT_HISTORY", sync.get().chatHistory()));
     }
 
     @Override
@@ -134,5 +157,15 @@ public class RoomWebSocketHandler extends TextWebSocketHandler {
         return value
                 .replace("\\", "\\\\")
                 .replace("\"", "\\\"");
+    }
+
+    private void send(WebSocketSession session, Object message) throws IOException {
+    String json = objectMapper.writeValueAsString(message);
+
+    synchronized (session) {
+        if (session.isOpen()) {
+            session.sendMessage(new TextMessage(json));
+            }
+        }
     }
 }

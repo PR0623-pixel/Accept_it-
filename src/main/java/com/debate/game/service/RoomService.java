@@ -20,6 +20,7 @@ import org.springframework.transaction.annotation.Transactional;
 import java.util.Locale;
 import java.util.List;
 import java.util.Objects;
+import java.util.Optional;
 
 
 @Service
@@ -167,7 +168,8 @@ public class RoomService {
                         .sorted(java.util.Comparator.comparing(Player::getId))
                         .map(p -> new com.debate.game.dto.LobbySnapshotResponse.LobbyPlayer(
                                 p.getId().toString(), p.getPlayerName(),
-                                p.getRole() == DebateRole.MODERATOR ? "MODERATOR" : "NONE",
+                                p.getRole() == null ? "NONE" 
+                                    : p.getRole() == DebateRole.MODERATOR ? "MODERATOR" : "GUEST",
                                 p.isReady(),
                                 room.getHostPlayer() != null &&
                                         java.util.Objects.equals(room.getHostPlayer().getId(), p.getId())))
@@ -182,6 +184,72 @@ public class RoomService {
                 players,
                 new com.debate.game.dto.LobbySnapshotResponse.LobbySettings(
                         5, room.getTurnTimeLimit() * 60, room.getMaxCardCount()));
+    }
+    //통신 간, 참가자 검증 조회
+    @Transactional(readOnly = true)
+    public Optional<com.debate.game.dto.LobbySnapshotResponse> getLobbyForPlayer(
+            String roomCode,
+            String playerId
+    ) {
+        String normalizedCode = roomCode == null
+                ? ""
+                : roomCode.strip().toUpperCase(Locale.ROOT);
+
+        if (!normalizedCode.matches("[A-Z0-9]{6}") || playerId == null) {
+            return Optional.empty();
+        }
+
+        final Long parsedPlayerId;
+        try {
+            parsedPlayerId = Long.valueOf(playerId);
+        } catch (NumberFormatException e) {
+            return Optional.empty();
+        }
+
+        Room room = roomRepository.findByRoomCode(normalizedCode).orElse(null);
+        if (room == null) {
+            return Optional.empty();
+        }
+
+        Player player = playerRepository.findById(parsedPlayerId).orElse(null);
+        if (player == null
+                || player.getRoom() == null
+                || !Objects.equals(player.getRoom().getId(), room.getId())) {
+            return Optional.empty();
+        }
+
+        return Optional.of(toLobbySnapshot(room));
+    }
+
+    private com.debate.game.dto.LobbySnapshotResponse toLobbySnapshot(Room room) {
+        java.util.List<com.debate.game.dto.LobbySnapshotResponse.LobbyPlayer> players =
+                playerRepository.findByRoom(room).stream()
+                        .sorted(java.util.Comparator.comparing(Player::getId))
+                        .map(p -> new com.debate.game.dto.LobbySnapshotResponse.LobbyPlayer(
+                                p.getId().toString(),
+                                p.getPlayerName(),
+                                p.getRole() == null ? "NONE"
+                                        : p.getRole() == DebateRole.MODERATOR
+                                                ? "MODERATOR" : "GUEST",
+                                p.isReady(),
+                                room.getHostPlayer() != null
+                                        && Objects.equals(room.getHostPlayer().getId(), p.getId())
+                        ))
+                        .toList();
+
+        return new com.debate.game.dto.LobbySnapshotResponse(
+                room.getRoomCode(),
+                room.getHostPlayer() == null
+                        ? null : room.getHostPlayer().getId().toString(),
+                room.getStatus() == RoomStatus.WAITING ? "LOBBY"
+                        : room.getStatus() == RoomStatus.FINISHED ? "RESULT" : "VOTING",
+                players,
+                new com.debate.game.dto.LobbySnapshotResponse.LobbySettings(
+                        5,
+                        room.getTurnTimeLimit() * 60,
+                        room.getMaxCardCount()
+                )
+        );
     }
 
     // 3. 역할군 선정 (찬성, 반대, 사회자)
