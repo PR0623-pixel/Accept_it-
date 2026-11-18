@@ -46,6 +46,9 @@ dependencies {
     // OpenAPI 3 / Swagger UI (Spring Boot 4.1.x)
     implementation 'org.springdoc:springdoc-openapi-starter-webmvc-ui:3.2.0'
 
+    // R17: frontend uses plain (non-STOMP) JSON WebSocket frames.
+    implementation 'org.springframework.boot:spring-boot-starter-websocket'
+
     // Server Health Check
     implementation 'org.springframework.boot:spring-boot-starter-actuator'
 }

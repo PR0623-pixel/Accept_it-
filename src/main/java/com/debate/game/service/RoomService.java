@@ -21,6 +21,9 @@ import com.debate.game.entity.enums.LobbyRole;
 import com.debate.game.repository.PlayerRepository;
 import com.debate.game.repository.RoomRepository;
 import lombok.RequiredArgsConstructor;
+import org.springframework.beans.factory.annotation.Autowired;
+import org.springframework.context.ApplicationEventPublisher;
+import com.debate.game.realtime.LobbyChangedEvent;
 import org.springframework.stereotype.Service;
 import org.springframework.transaction.annotation.Transactional;
 
@@ -39,6 +42,22 @@ public class RoomService {
     private final RoomCodeGenerator roomCodeGenerator;
 
     private static final int MAX_CODE_ATTEMPTS = 5;
+
+    // Setter injection preserves the existing four-argument constructor used by
+    // R01-R16 tests. Spring injects this in production; direct unit instances
+    // have no transport side effects unless explicitly configured.
+    private ApplicationEventPublisher lobbyEventPublisher;
+
+    @Autowired
+    public void setLobbyEventPublisher(ApplicationEventPublisher publisher) {
+        this.lobbyEventPublisher = publisher;
+    }
+
+    private void lobbyChanged(String roomCode, Long leftPlayerId, boolean roomClosed) {
+        if (lobbyEventPublisher != null) {
+            lobbyEventPublisher.publishEvent(new LobbyChangedEvent(roomCode, leftPlayerId, roomClosed));
+        }
+    }
 
     // R02: create a room and its Host player atomically.
     // R03: pre-check and 5 retries; database UNIQUE handles rare concurrent collisions.
@@ -86,6 +105,7 @@ public class RoomService {
         // The same @Transactional boundary commits room, player and host reference together.
         room.setHostPlayer(host);
         roomRepository.save(room); // update host_player_id (also explicit for detached repository mocks)
+        lobbyChanged(roomCode, null, false);
         return new RoomEnterResponse(roomCode, host.getId().toString());
     }
 
@@ -118,6 +138,7 @@ public class RoomService {
         playerRepository.save(player);
 
         // RoomEnterResponse uses String playerId (same as frontend/types.ts Player.id).
+        lobbyChanged(room.getRoomCode(), null, false);
         return new RoomEnterResponse(room.getRoomCode(), player.getId().toString());
     }
 
@@ -156,11 +177,13 @@ public class RoomService {
             playerRepository.deleteAll(members);
             playerRepository.flush();
             roomRepository.delete(room);
+            lobbyChanged(room.getRoomCode(), null, true);
             return;
         }
 
         // R07: a normal guest only frees their own slot.
         playerRepository.delete(player);
+        lobbyChanged(room.getRoomCode(), playerId, false);
     }
 
     // R06: read-only lobby snapshot. Reused later by the WebSocket ROOM_STATE mapper.
@@ -247,6 +270,35 @@ public class RoomService {
         for (Player member : playerRepository.findByRoomForUpdate(room)) {
             member.setReady(false);
         }
+        lobbyChanged(room.getRoomCode(), null, false);
+    }
+
+    // R17: frontend UPDATE_SETTINGS sends only the three editable fields.
+    // Preserve speechSeconds/rebuttalSeconds without a read-then-write race.
+    @Transactional
+    public void updateSocketSettings(String roomCode, Long playerId, Integer maxItems,
+                                     Integer itemSeconds, Integer cardsPerItem) {
+        int validatedItems = RoomSettingsPolicy.maxItems(maxItems);
+        int validatedSeconds = RoomSettingsPolicy.itemSeconds(itemSeconds);
+        int validatedCards = RoomSettingsPolicy.cardsPerItem(cardsPerItem);
+        String code = roomCode == null ? "" : roomCode.strip().toUpperCase(Locale.ROOT);
+        if (!code.matches("[A-Z0-9]{6}")) throw new InvalidRoomCodeException("방을 찾을 수 없습니다.");
+        if (playerId == null || playerId <= 0) throw new PlayerNotInRoomException();
+
+        Room room = roomRepository.findByRoomCodeForUpdate(code)
+                .orElseThrow(() -> new InvalidRoomCodeException("방을 찾을 수 없습니다."));
+        if (room.getStatus() != RoomStatus.WAITING) throw new AlreadyStartedException();
+        Long memberRoomId = playerRepository.findRoomIdByPlayerId(playerId)
+                .orElseThrow(PlayerNotInRoomException::new);
+        if (!Objects.equals(room.getId(), memberRoomId)) throw new PlayerNotInRoomException();
+        if (room.getHostPlayer() == null ||
+                !Objects.equals(room.getHostPlayer().getId(), playerId)) throw new NotHostException();
+
+        room.setMaxItems(validatedItems);
+        room.setTurnTimeLimit(validatedSeconds / 60);
+        room.setMaxCardCount(validatedCards);
+        for (Player member : playerRepository.findByRoomForUpdate(room)) member.setReady(false);
+        lobbyChanged(room.getRoomCode(), null, false);
     }
 
     // R16: validate a Host-initiated start request WITHOUT starting the game.
@@ -356,6 +408,7 @@ public class RoomService {
         player.setRole(selectedRole);
         player.setStance(null);
         player.setReady(false);
+        lobbyChanged(room.getRoomCode(), null, false);
     }
     // R11: separate Ready/Ready-cancel action. Reuse R05/R10 room-then-player
     // locking order to serialize SET_READY with joins, leaves and role changes.
@@ -395,5 +448,6 @@ public class RoomService {
         // Explicit assignment supports both Ready and Ready cancellation. Repeating
         // the same value is harmless. Game start/AI generation belongs to R16/G03.
         player.setReady(ready);
+        lobbyChanged(room.getRoomCode(), null, false);
     }
 }

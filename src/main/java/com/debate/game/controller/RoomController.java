@@ -71,7 +71,7 @@ public class RoomController {
     // R07/R08: REST leave endpoint; frontend lobby transport remains WebSocket.
     @Operation(summary = "로비 나가기 / Host 방 폐쇄",
             description = "WAITING 로비에서 일반 참가자는 본인만 퇴장하고, Host는 모든 참가자와 방을 삭제합니다. " +
-                    "Host 퇴장 시 방 코드는 즉시 무효화됩니다. WebSocket 알림은 후속 구현 범위입니다.")
+                    "Host 퇴장 시 방 코드는 즉시 무효화되고 R17 WebSocket 접속자에게 ROOM_NOT_FOUND가 전송됩니다.")
     @ApiResponses({
         @ApiResponse(responseCode = "204", description = "퇴장 완료"),
         @ApiResponse(responseCode = "404", description = "ROOM_NOT_FOUND 또는 PLAYER_NOT_IN_ROOM"),
@@ -85,7 +85,7 @@ public class RoomController {
     }
 
     // R06: inspection endpoint. Frontend currently consumes WebSocket ROOM_STATE, not this REST route.
-    @Operation(summary = "로비 정보 조회", description = "방 코드, Host, 참가자, 역할, Ready 및 설정값을 조회합니다. WebSocket ROOM_STATE 연동은 추후 단계입니다.")
+    @Operation(summary = "로비 정보 조회", description = "방 코드, Host, 참가자, 역할, Ready 및 설정값을 조회합니다. R17 WebSocket ROOM_STATE는 별도의 전체 상태 스냅샷을 제공합니다.")
     @ApiResponses({
         @ApiResponse(responseCode = "200", description = "조회 성공"),
         @ApiResponse(responseCode = "404", description = "ROOM_NOT_FOUND", content = @Content(schema = @Schema(implementation = ErrorResponse.class)))
