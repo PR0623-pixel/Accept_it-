@@ -26,6 +26,8 @@ out/
 application-local.yml
 application-local.yaml
 application-local.properties
+**/application.yml
+
 
 ### logs and temp files ###
 *.log
