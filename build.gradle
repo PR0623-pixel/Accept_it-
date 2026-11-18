@@ -45,6 +45,9 @@ dependencies {
 
     // OpenAPI 3 / Swagger UI (Spring Boot 4.1.x)
     implementation 'org.springdoc:springdoc-openapi-starter-webmvc-ui:3.2.0'
+    
+    // WebSocket 실시간 통신
+    implementation 'org.springframework.boot:spring-boot-starter-websocket'
 
     // Server Health Check
     implementation 'org.springframework.boot:spring-boot-starter-actuator'
@@ -52,4 +55,8 @@ dependencies {
 
 tasks.named('test') {
     useJUnitPlatform()
+}
+
+tasks.withType(JavaCompile).configureEach {
+    options.compilerArgs += ['-Xlint:deprecation']
 }
