@@ -3,15 +3,14 @@ services:
     image: mysql:8.0
     container_name: AcceptIt_db
     ports:
-      - "127.0.0.1:3307:3306"
+      - "127.0.0.1:3306:3306"
     environment:
-      MYSQL_ROOT_PASSWORD: rootpw123
-      MYSQL_DATABASE: acceptit_db
-      MYSQL_USER: acceptit_user
-      MYSQL_PASSWORD: userpw123
+      MYSQL_ROOT_PASSWORD: ${DB_ROOT_PASSWORD}
+      MYSQL_DATABASE: ${DB_NAME}
+      MYSQL_USER: ${DB_USER}
+      MYSQL_PASSWORD: ${DB_PASSWORD}
     volumes:
       - mysql_data:/var/lib/mysql
-      - ./database/schema-legacy.sql:/docker-entrypoint-initdb.d/init.sql
     restart: unless-stopped
 
 volumes:

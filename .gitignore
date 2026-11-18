@@ -7,6 +7,9 @@ AcceptIt_Unity/
 ### build ###
 **/build/
 
+### bin ###
+bin/
+
 ### IntelliJ IDEA ###
 .idea/
 *.iws
