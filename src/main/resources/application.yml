@@ -27,9 +27,9 @@ spring:
     name: AcceptIt
 
   datasource:
-    url: jdbc:mysql://localhost:3306/${DB_NAME:acceptit_db}
-    username: ${DB_USER}
-    password: ${DB_PASSWORD}
+    url: jdbc:mysql://localhost:3307/${DB_NAME:acceptit_db}
+    username: acceptit_user
+    password: userpw123
     driver-class-name: com.mysql.cj.jdbc.Driver
 
   jpa:

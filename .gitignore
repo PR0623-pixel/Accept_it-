@@ -2,7 +2,7 @@
 AcceptIt_Unity/
 
 ### Gradle ###
-.gradle/
+# .gradle/
 
 ### build ###
 **/build/
