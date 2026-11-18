@@ -42,9 +42,10 @@ class RoomServiceNicknameTest {
             return player;
         });
 
-        Long id = service.joinRoom("ABC123", "  홍길동  ");
+        var result = service.joinRoom("ABC123", "  홍길동  ");
 
-        assertEquals(77L, id);
+        assertEquals("77", result.playerId());
+        assertEquals("ABC123", result.roomCode());
         verify(playerRepository).save(argThat(p -> "홍길동".equals(p.getPlayerName()) && p.getRoom() == room));
     }
 

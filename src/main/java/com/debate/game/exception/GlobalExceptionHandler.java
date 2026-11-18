@@ -20,7 +20,7 @@ public class GlobalExceptionHandler extends ResponseEntityExceptionHandler {
 
     @ExceptionHandler(InvalidRoomCodeException.class)
     public ResponseEntity<Object> handleInvalidRoomCode(InvalidRoomCodeException e) {
-        return error(HttpStatus.BAD_REQUEST, "INVALID_ROOM_CODE", "존재하지 않는 방 코드입니다.");
+        return error(HttpStatus.NOT_FOUND, "ROOM_NOT_FOUND", "방을 찾을 수 없습니다.");
     }
 
     @ExceptionHandler(RoomCodeGenerationException.class)
@@ -30,7 +30,12 @@ public class GlobalExceptionHandler extends ResponseEntityExceptionHandler {
 
     @ExceptionHandler(RoomFullException.class)
     public ResponseEntity<Object> handleRoomFull(RoomFullException e) {
-        return error(HttpStatus.CONFLICT, "ROOM_FULL", "방 인원이 초과되었습니다. (최대 3명)");
+        return error(HttpStatus.CONFLICT, "ROOM_FULL", "방이 가득 찼습니다.");
+    }
+
+    @ExceptionHandler(AlreadyStartedException.class)
+    public ResponseEntity<Object> handleAlreadyStarted(AlreadyStartedException e) {
+        return error(HttpStatus.CONFLICT, "ALREADY_STARTED", "이미 시작된 방입니다.");
     }
 
     @ExceptionHandler(AiConfigurationException.class)

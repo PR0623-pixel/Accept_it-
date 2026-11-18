@@ -2,10 +2,12 @@ package com.debate.game.service;
 
 import com.debate.game.exception.InvalidRoomCodeException;
 import com.debate.game.exception.RoomFullException;
+import com.debate.game.exception.AlreadyStartedException;
 import com.debate.game.exception.RoomCodeGenerationException;
 import com.debate.game.validation.NicknameValidator;
 import com.debate.game.dto.RoomEnterResponse;
 import com.debate.game.entity.Player;
+import com.debate.game.entity.enums.RoomStatus;
 import com.debate.game.entity.Room;
 import com.debate.game.entity.enums.DebateRole;
 import com.debate.game.repository.PlayerRepository;
@@ -13,6 +15,8 @@ import com.debate.game.repository.RoomRepository;
 import lombok.RequiredArgsConstructor;
 import org.springframework.stereotype.Service;
 import org.springframework.transaction.annotation.Transactional;
+
+import java.util.Locale;
 
 
 @Service
@@ -73,28 +77,34 @@ public class RoomService {
         return new RoomEnterResponse(roomCode, host.getId().toString());
     }
 
-    // 2. 방 입장 (Join) 및 3명 인원 제한 체크
+    // R04: frontend-compatible room join. Concurrent capacity safety is R05.
     @Transactional
-    public Long joinRoom(String roomCode, String playerName) {
-        // R01: 저장 전 서버에서 형식을 검증하고 앞뒤 공백을 정리한다.
-        // TODO(R01): 같은 방 내 닉네임 중복 허용 여부는 팀 협의 후 확정.
+    public RoomEnterResponse joinRoom(String roomCode, String playerName) {
+        // Reuse R01 nickname rules, and accept lowercase room codes from manual input.
         String normalizedName = nicknameValidator.normalizeAndValidate(playerName);
+        String normalizedCode = roomCode == null ? "" : roomCode.strip().toUpperCase(Locale.ROOT);
+        if (!normalizedCode.matches("[A-Z0-9]{6}")) {
+            throw new InvalidRoomCodeException("방을 찾을 수 없습니다.");
+        }
 
-        Room room = roomRepository.findByRoomCode(roomCode)
-                .orElseThrow(() -> new InvalidRoomCodeException("존재하지 않는 방 코드입니다."));
+        Room room = roomRepository.findByRoomCode(normalizedCode)
+                .orElseThrow(() -> new InvalidRoomCodeException("방을 찾을 수 없습니다."));
 
-        // 현재 방의 인원 수 확인 (3명 제한)
-        long currentPlayerCount = playerRepository.countByRoom(room);
-        if (currentPlayerCount >= 3) {
-            throw new RoomFullException("방 인원이 초과되었습니다. (최대 3명)"); // 에러 발생
+        if (room.getStatus() != RoomStatus.WAITING) {
+            throw new AlreadyStartedException();
+        }
+        if (playerRepository.countByRoom(room) >= 3) {
+            throw new RoomFullException("방이 가득 찼습니다.");
         }
 
         Player player = new Player();
         player.setRoom(room);
         player.setPlayerName(normalizedName);
+        player.setReady(false);
         playerRepository.save(player);
 
-        return player.getId();
+        // RoomEnterResponse uses String playerId (same as frontend/types.ts Player.id).
+        return new RoomEnterResponse(room.getRoomCode(), player.getId().toString());
     }
 
     // 3. 역할군 선정 (찬성, 반대, 사회자)

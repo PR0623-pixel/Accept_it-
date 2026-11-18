@@ -21,7 +21,8 @@ class GlobalExceptionHandlerTest {
 
     @Test
     void domainErrorsHaveSafeCompatibleBodies() throws Exception {
-        check("room", 400, "INVALID_ROOM_CODE");
+        check("room", 404, "ROOM_NOT_FOUND");
+        check("started", 409, "ALREADY_STARTED");
         check("full", 409, "ROOM_FULL");
         check("config", 503, "AI_NOT_CONFIGURED");
         check("ai", 502, "AI_SERVICE_ERROR");
@@ -33,7 +34,7 @@ class GlobalExceptionHandlerTest {
     private void check(String type, int status, String code) throws Exception {
         mvc.perform(get("/errors/" + type)).andExpect(status().is(status))
                 .andExpect(jsonPath("$.code").value(code))
-                .andExpect(jsonPath("$.errorMessage").isString())
+                .andExpect(jsonPath("$.message").isString())
                 .andExpect(content().string(org.hamcrest.Matchers.not(org.hamcrest.Matchers.containsString("sensitive-detail"))));
     }
 
@@ -60,6 +61,7 @@ class GlobalExceptionHandlerTest {
             throw switch (type) {
                 case "room" -> new InvalidRoomCodeException("sensitive-detail");
                 case "full" -> new RoomFullException("sensitive-detail");
+                case "started" -> new AlreadyStartedException();
                 case "config" -> new AiConfigurationException();
                 case "ai" -> new AiServiceException("sensitive-detail");
                 case "argument" -> new IllegalArgumentException("sensitive-detail");

@@ -3,6 +3,7 @@ package com.debate.game.controller;
 import com.debate.game.exception.GlobalExceptionHandler;
 import com.debate.game.exception.InvalidNicknameException;
 import com.debate.game.service.RoomService;
+import com.debate.game.dto.RoomEnterResponse;
 import org.junit.jupiter.api.BeforeEach;
 import org.junit.jupiter.api.Test;
 import org.springframework.http.MediaType;
@@ -26,21 +27,22 @@ class RoomControllerNicknameTest {
 
     @Test
     void acceptsFrontendJsonNickname() throws Exception {
-        when(roomService.joinRoom("ABC123", "홍길동")).thenReturn(42L);
+        when(roomService.joinRoom("ABC123", "홍길동")).thenReturn(new RoomEnterResponse("ABC123", "42"));
         mvc.perform(post("/api/rooms/ABC123/join")
                         .contentType(MediaType.APPLICATION_JSON)
                         .content("{\"nickname\":\"홍길동\"}"))
                 .andExpect(status().isOk())
-                .andExpect(content().string("42"));
+                .andExpect(jsonPath("$.roomCode").value("ABC123"))
+                .andExpect(jsonPath("$.playerId").value("42"));
         verify(roomService).joinRoom("ABC123", "홍길동");
     }
 
     @Test
     void supportsPreviousQueryParameterForExistingClients() throws Exception {
-        when(roomService.joinRoom("ABC123", "민수")).thenReturn(5L);
+        when(roomService.joinRoom("ABC123", "민수")).thenReturn(new RoomEnterResponse("ABC123", "5"));
         mvc.perform(post("/api/rooms/ABC123/join").param("playerName", "민수"))
                 .andExpect(status().isOk())
-                .andExpect(content().string("5"));
+                .andExpect(jsonPath("$.playerId").value("5"));
     }
 
     @Test
@@ -52,6 +54,6 @@ class RoomControllerNicknameTest {
                         .content("{\"nickname\":\"   \"}"))
                 .andExpect(status().isBadRequest())
                 .andExpect(jsonPath("$.code").value("INVALID_NICKNAME"))
-                .andExpect(jsonPath("$.errorMessage").value("닉네임을 입력하세요."));
+                .andExpect(jsonPath("$.message").value("닉네임을 입력하세요."));
     }
 }

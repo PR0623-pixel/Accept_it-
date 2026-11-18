@@ -44,24 +44,25 @@ public class RoomController {
         return ResponseEntity.ok(result);
     }
 
-    // 2. 방 Code 입력 후 Join 클릭 시[cite: 1]
-    @Operation(summary = "방 입장", description = "JSON 요청 {nickname}으로 방에 입장합니다. "+
-            "이전 클라이언트의 playerName 쿼리 파라미터도 임시로 지원합니다. "+
-            "입장 응답은 기존 Long playerId이며, 프론트 계약에 맞춘 응답 변경은 R04/X01에서 처리합니다.")
+    // R04: frontend/rest.ts -> {nickname} / {roomCode, playerId}.
+    @Operation(summary = "방 입장", description = "프론트엔드 JSON {nickname}으로 방에 입장하고 " +
+            "{roomCode, playerId}를 반환합니다. 기존 playerName 쿼리 방식도 임시 지원합니다.")
     @ApiResponses({
-        @ApiResponse(responseCode = "400", description = "유효하지 않은 닉네임(INVALID_NICKNAME), 잘못된 방 코드 또는 요청",
+        @ApiResponse(responseCode = "200", description = "방 입장 성공",
+                content = @Content(schema = @Schema(implementation = RoomEnterResponse.class))),
+        @ApiResponse(responseCode = "400", description = "INVALID_NICKNAME 등 잘못된 요청",
                 content = @Content(schema = @Schema(implementation = ErrorResponse.class))),
-        @ApiResponse(responseCode = "409", description = "방 정원 3명 초과",
+        @ApiResponse(responseCode = "404", description = "ROOM_NOT_FOUND: 존재하지 않는 방",
+                content = @Content(schema = @Schema(implementation = ErrorResponse.class))),
+        @ApiResponse(responseCode = "409", description = "ROOM_FULL 또는 ALREADY_STARTED",
                 content = @Content(schema = @Schema(implementation = ErrorResponse.class)))
     })
     @PostMapping("/{roomCode}/join")
-    public ResponseEntity<Long> joinRoom(@PathVariable String roomCode,
+    public ResponseEntity<RoomEnterResponse> joinRoom(@PathVariable String roomCode,
                                          @RequestBody(required = false) JoinRoomRequest request,
                                          @RequestParam(name = "playerName", required = false) String legacyPlayerName) {
-        // JSON 요청이 있으면 해당 값을 사용하고, 없을 때만 기존 쿼리 파라미터를 사용한다.
         String nickname = request != null ? request.getNickname() : legacyPlayerName;
-        Long playerId = roomService.joinRoom(roomCode, nickname);
-        return ResponseEntity.ok(playerId); // 부여받은 고유 Player ID 반환
+        return ResponseEntity.ok(roomService.joinRoom(roomCode, nickname));
     }
 
     // 3. 누른 사람 역할군에 맞는 맵핑 (준비 완료)[cite: 1]
