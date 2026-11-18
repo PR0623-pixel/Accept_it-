@@ -4,6 +4,7 @@ package com.debate.game.controller;
 import com.debate.game.dto.RoleSelectRequest;
 import com.debate.game.dto.JoinRoomRequest;
 import com.debate.game.dto.RoomCreateRequest;
+import com.debate.game.dto.RoomEnterResponse;
 import com.debate.game.service.RoomService;
 import lombok.RequiredArgsConstructor;
 import io.swagger.v3.oas.annotations.Operation;
@@ -24,36 +25,71 @@ public class RoomController {
 
     private final RoomService roomService;
 
-    // 1. 방 만들기 버튼 클릭 시[cite: 1]
-    @Operation(summary = "방 생성", description = "카드 수와 턴 시간 설정을 저장하고 6자리 방 코드를 반환합니다.")
+    // R02: the frontend creates the room with { "nickname": "..." }.
+    @Operation(summary = "방 생성 및 Host 등록",
+            description = "닉네임을 검증한 뒤 방과 Host 플레이어를 함께 저장하고 roomCode/playerId를 반환합니다. " +
+                    "Host 권한은 로비 역할과 별도입니다. 방 코드는 6자리 영숫자로 발급하며 중복 시 최대 5회 재생성합니다.")
     @ApiResponses({
-        @ApiResponse(responseCode = "400", description = "잘못된 요청",
+        @ApiResponse(responseCode = "200", description = "방 생성 성공",
+                content = @Content(schema = @Schema(implementation = RoomEnterResponse.class))),
+        @ApiResponse(responseCode = "400", description = "잘못된 닉네임 또는 방 설정",
+                content = @Content(schema = @Schema(implementation = ErrorResponse.class))),
+        @ApiResponse(responseCode = "503", description = "사용 가능한 방 코드 발급 실패",
                 content = @Content(schema = @Schema(implementation = ErrorResponse.class)))
     })
     @PostMapping
-    public ResponseEntity<String> createRoom(@RequestBody RoomCreateRequest request) {
-        String roomCode = roomService.createRoom(request.getMaxCardCount(), request.getTurnTimeLimit());
-        return ResponseEntity.ok(roomCode);
+    public ResponseEntity<RoomEnterResponse> createRoom(@RequestBody RoomCreateRequest request) {
+        RoomEnterResponse result = roomService.createRoom(
+                request.getNickname(), request.getMaxCardCount(), request.getTurnTimeLimit());
+        return ResponseEntity.ok(result);
     }
 
-    // 2. 방 Code 입력 후 Join 클릭 시[cite: 1]
-    @Operation(summary = "방 입장", description = "JSON 요청 {nickname}으로 방에 입장합니다. "+
-            "이전 클라이언트의 playerName 쿼리 파라미터도 임시로 지원합니다. "+
-            "입장 응답은 기존 Long playerId이며, 프론트 계약에 맞춘 응답 변경은 R04/X01에서 처리합니다.")
+    // R04: frontend/rest.ts -> {nickname} / {roomCode, playerId}.
+    @Operation(summary = "방 입장", description = "프론트엔드 JSON {nickname}으로 방에 입장하고 " +
+            "{roomCode, playerId}를 반환합니다. 기존 playerName 쿼리 방식도 임시 지원합니다.")
     @ApiResponses({
-        @ApiResponse(responseCode = "400", description = "유효하지 않은 닉네임(INVALID_NICKNAME), 잘못된 방 코드 또는 요청",
+        @ApiResponse(responseCode = "200", description = "방 입장 성공",
+                content = @Content(schema = @Schema(implementation = RoomEnterResponse.class))),
+        @ApiResponse(responseCode = "400", description = "INVALID_NICKNAME 등 잘못된 요청",
                 content = @Content(schema = @Schema(implementation = ErrorResponse.class))),
-        @ApiResponse(responseCode = "409", description = "방 정원 3명 초과",
+        @ApiResponse(responseCode = "404", description = "ROOM_NOT_FOUND: 존재하지 않는 방",
+                content = @Content(schema = @Schema(implementation = ErrorResponse.class))),
+        @ApiResponse(responseCode = "409", description = "ROOM_FULL 또는 ALREADY_STARTED",
                 content = @Content(schema = @Schema(implementation = ErrorResponse.class)))
     })
     @PostMapping("/{roomCode}/join")
-    public ResponseEntity<Long> joinRoom(@PathVariable String roomCode,
+    public ResponseEntity<RoomEnterResponse> joinRoom(@PathVariable String roomCode,
                                          @RequestBody(required = false) JoinRoomRequest request,
                                          @RequestParam(name = "playerName", required = false) String legacyPlayerName) {
-        // JSON 요청이 있으면 해당 값을 사용하고, 없을 때만 기존 쿼리 파라미터를 사용한다.
         String nickname = request != null ? request.getNickname() : legacyPlayerName;
-        Long playerId = roomService.joinRoom(roomCode, nickname);
-        return ResponseEntity.ok(playerId); // 부여받은 고유 Player ID 반환
+        return ResponseEntity.ok(roomService.joinRoom(roomCode, nickname));
+    }
+
+    // R07/R08: REST leave endpoint; frontend lobby transport remains WebSocket.
+    @Operation(summary = "로비 나가기 / Host 방 폐쇄",
+            description = "WAITING 로비에서 일반 참가자는 본인만 퇴장하고, Host는 모든 참가자와 방을 삭제합니다. " +
+                    "Host 퇴장 시 방 코드는 즉시 무효화됩니다. WebSocket 알림은 후속 구현 범위입니다.")
+    @ApiResponses({
+        @ApiResponse(responseCode = "204", description = "퇴장 완료"),
+        @ApiResponse(responseCode = "404", description = "ROOM_NOT_FOUND 또는 PLAYER_NOT_IN_ROOM"),
+        @ApiResponse(responseCode = "409", description = "ALREADY_STARTED: 시작된 게임에서 퇴장 불가")
+    })
+    @PostMapping("/{roomCode}/leave")
+    public ResponseEntity<Void> leaveRoom(@PathVariable String roomCode,
+            @RequestBody com.debate.game.dto.RoomLeaveRequest request) {
+        roomService.leaveRoom(roomCode, request.playerIdAsLong());
+        return ResponseEntity.noContent().build();
+    }
+
+    // R06: inspection endpoint. Frontend currently consumes WebSocket ROOM_STATE, not this REST route.
+    @Operation(summary = "로비 정보 조회", description = "방 코드, Host, 참가자, 역할, Ready 및 설정값을 조회합니다. WebSocket ROOM_STATE 연동은 추후 단계입니다.")
+    @ApiResponses({
+        @ApiResponse(responseCode = "200", description = "조회 성공"),
+        @ApiResponse(responseCode = "404", description = "ROOM_NOT_FOUND", content = @Content(schema = @Schema(implementation = ErrorResponse.class)))
+    })
+    @GetMapping("/{roomCode}")
+    public ResponseEntity<com.debate.game.dto.LobbySnapshotResponse> getLobby(@PathVariable String roomCode) {
+        return ResponseEntity.ok(roomService.getLobby(roomCode));
     }
 
     // 3. 누른 사람 역할군에 맞는 맵핑 (준비 완료)[cite: 1]

@@ -27,14 +27,14 @@ class RoomServiceNicknameTest {
 
     @BeforeEach
     void setUp() {
-        service = new RoomService(roomRepository, playerRepository, new NicknameValidator());
+        service = new RoomService(roomRepository, playerRepository, new NicknameValidator(), mock(RoomCodeGenerator.class));
         room = new Room();
         room.setRoomCode("ABC123");
     }
 
     @Test
     void joinPersistsNormalizedNickname() {
-        when(roomRepository.findByRoomCode("ABC123")).thenReturn(Optional.of(room));
+        when(roomRepository.findByRoomCodeForUpdate("ABC123")).thenReturn(Optional.of(room));
         when(playerRepository.countByRoom(room)).thenReturn(0L);
         when(playerRepository.save(any(Player.class))).thenAnswer(invocation -> {
             Player player = invocation.getArgument(0);
@@ -42,9 +42,10 @@ class RoomServiceNicknameTest {
             return player;
         });
 
-        Long id = service.joinRoom("ABC123", "  홍길동  ");
+        var result = service.joinRoom("ABC123", "  홍길동  ");
 
-        assertEquals(77L, id);
+        assertEquals("77", result.playerId());
+        assertEquals("ABC123", result.roomCode());
         verify(playerRepository).save(argThat(p -> "홍길동".equals(p.getPlayerName()) && p.getRoom() == room));
     }
 

@@ -4,10 +4,16 @@ import io.swagger.v3.oas.annotations.media.Schema;
 import lombok.Getter;
 import lombok.Setter;
 
+/** R02: frontend sends only nickname; legacy room settings are temporarily optional. */
 @Getter @Setter
 public class RoomCreateRequest {
-    @Schema(description = "사용자에게 지급할 카드 수", example = "5")
-    private int maxCardCount; // 1개의 쟁점에 대한 최대 카드 매수
-    @Schema(description = "턴 제한 시간 (현재 저장되지만 서버에서 시간 경과를 강제하지 않음)", example = "5")
-    private int turnTimeLimit; // 턴 시간 (3~20분)[cite: 1]
+    @Schema(description = "Host nickname (leading/trailing spaces stripped, 1-10 chars)",
+            example = "홍길동", requiredMode = Schema.RequiredMode.REQUIRED, maxLength = 10)
+    private String nickname;
+
+    @Schema(description = "Optional legacy card count. Defaults to 3; full settings contract is R13/R14.", example = "3")
+    private Integer maxCardCount;
+
+    @Schema(description = "Optional legacy time limit in minutes. Defaults to 5; full settings contract is R13/R14.", example = "5")
+    private Integer turnTimeLimit;
 }

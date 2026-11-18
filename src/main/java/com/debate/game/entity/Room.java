@@ -16,6 +16,12 @@ public class Room {
     @Column(unique = true, nullable = false, length = 6)
     private String roomCode;
 
+    // R02: Host is a room-management authority, NOT PRO/CON/MODERATOR.
+    // Existing rooms are allowed to have a null host; new rooms always assign one.
+    @OneToOne(fetch = FetchType.LAZY)
+    @JoinColumn(name = "host_player_id", unique = true)
+    private Player hostPlayer;
+
     private String currentTopic; // 현재 방의 토론 주제
 
     private int maxCardCount; // 받는 카드 수 제한
