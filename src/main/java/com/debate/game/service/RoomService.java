@@ -2,6 +2,7 @@ package com.debate.game.service;
 
 import com.debate.game.exception.InvalidRoomCodeException;
 import com.debate.game.exception.RoomFullException;
+import com.debate.game.validation.NicknameValidator;
 import com.debate.game.entity.Player;
 import com.debate.game.entity.Room;
 import com.debate.game.entity.enums.DebateRole;
@@ -19,6 +20,7 @@ public class RoomService {
 
     private final RoomRepository roomRepository;
     private final PlayerRepository playerRepository;
+    private final NicknameValidator nicknameValidator;
 
     // 1. 방 생성 (Host)
     @Transactional
@@ -37,6 +39,10 @@ public class RoomService {
     // 2. 방 입장 (Join) 및 3명 인원 제한 체크
     @Transactional
     public Long joinRoom(String roomCode, String playerName) {
+        // R01: 저장 전 서버에서 형식을 검증하고 앞뒤 공백을 정리한다.
+        // TODO(R01): 같은 방 내 닉네임 중복 허용 여부는 팀 협의 후 확정.
+        String normalizedName = nicknameValidator.normalizeAndValidate(playerName);
+
         Room room = roomRepository.findByRoomCode(roomCode)
                 .orElseThrow(() -> new InvalidRoomCodeException("존재하지 않는 방 코드입니다."));
 
@@ -48,7 +54,7 @@ public class RoomService {
 
         Player player = new Player();
         player.setRoom(room);
-        player.setPlayerName(playerName);
+        player.setPlayerName(normalizedName);
         playerRepository.save(player);
 
         return player.getId();
