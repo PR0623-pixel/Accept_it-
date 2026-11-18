@@ -1,6 +1,7 @@
 package com.debate.game.controller;
 
 import com.debate.game.exception.GlobalExceptionHandler;
+import com.debate.game.exception.RoleFullException;
 import com.debate.game.service.RoomService;
 import org.junit.jupiter.api.BeforeEach;
 import org.junit.jupiter.api.Test;
@@ -30,6 +31,17 @@ class RoomControllerRoleTest {
                         .content("{\"playerId\":12,\"role\":\"GUEST\"}"))
                 .andExpect(status().isOk());
         verify(roomService).selectRole(12L, "GUEST");
+    }
+
+    @Test
+    void roleCapacityConflictUsesFrontendErrorContract() throws Exception {
+        doThrow(new RoleFullException()).when(roomService).selectRole(12L, "MODERATOR");
+        mvc.perform(post("/api/rooms/ready")
+                        .contentType(MediaType.APPLICATION_JSON)
+                        .content("{\"playerId\":12,\"role\":\"MODERATOR\"}"))
+                .andExpect(status().isConflict())
+                .andExpect(jsonPath("$.code").value("ROLE_FULL"))
+                .andExpect(jsonPath("$.message").value("해당 역할 자리가 가득 찼습니다."));
     }
 
     @Test

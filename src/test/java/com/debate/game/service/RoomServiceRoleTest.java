@@ -5,15 +5,20 @@ import com.debate.game.entity.Room;
 import com.debate.game.entity.enums.LobbyRole;
 import com.debate.game.entity.enums.RoomStatus;
 import com.debate.game.entity.enums.Stance;
+import com.debate.game.exception.RoleFullException;
 import com.debate.game.repository.PlayerRepository;
 import com.debate.game.repository.RoomRepository;
 import com.debate.game.validation.NicknameValidator;
 import org.junit.jupiter.api.BeforeEach;
 import org.junit.jupiter.api.Test;
 import org.junit.jupiter.api.extension.ExtendWith;
+import org.mockito.InOrder;
 import org.mockito.Mock;
 import org.mockito.junit.jupiter.MockitoExtension;
 
+import java.util.ArrayList;
+import java.util.Arrays;
+import java.util.List;
 import java.util.Optional;
 
 import static org.junit.jupiter.api.Assertions.*;
@@ -35,41 +40,51 @@ class RoomServiceRoleTest {
         room = new Room();
         room.setId(10L);
         room.setStatus(RoomStatus.WAITING);
-        guest = new Player();
-        guest.setId(12L);
-        guest.setRoom(room);
+        guest = newPlayer(12L, LobbyRole.NONE);
+    }
+
+    private Player newPlayer(long id, LobbyRole role) {
+        Player p = new Player();
+        p.setId(id);
+        p.setRoom(room);
+        p.setRole(role);
+        return p;
+    }
+
+    private void assignRoster(Player... others) {
+        when(players.findRoomIdByPlayerId(12L)).thenReturn(Optional.of(10L));
+        when(rooms.findByIdForUpdate(10L)).thenReturn(Optional.of(room));
+        List<Player> roster = new ArrayList<>();
+        roster.add(guest);
+        roster.addAll(Arrays.asList(others));
+        when(players.findByRoomForUpdate(room)).thenReturn(roster);
     }
 
     @Test
     void guestCanChooseLobbyRoleWithoutBeingFixedToProOrCon() {
-        when(players.findById(12L)).thenReturn(Optional.of(guest));
+        assignRoster();
         service.selectRole(12L, " guest ");
-
         assertEquals(LobbyRole.GUEST, guest.getRole());
         assertNull(guest.getStance());
         assertFalse(guest.isReady());
-        verify(players, never()).findByRoom(any()); // role limits handled in R10
     }
 
     @Test
     void hostPermissionIsIndependentOfLobbyRole() {
         room.setHostPlayer(guest);
-        when(players.findById(12L)).thenReturn(Optional.of(guest));
+        assignRoster();
         service.selectRole(12L, "moderator");
-
         assertSame(guest, room.getHostPlayer());
         assertEquals(LobbyRole.MODERATOR, guest.getRole());
     }
 
     @Test
-    void noneClearsLobbyRoleAndReadiness() {
-        guest.setRole(LobbyRole.GUEST);
-        guest.setStance(Stance.PRO); // defensive: stale data must not survive role change
+    void noneClearsLobbyRoleAndReadinessEvenWithOccupiedSlots() {
+        guest.setRole(LobbyRole.MODERATOR);
+        guest.setStance(Stance.PRO);
         guest.setReady(true);
-        when(players.findById(12L)).thenReturn(Optional.of(guest));
-
+        assignRoster(newPlayer(13L, LobbyRole.MODERATOR));
         service.selectRole(12L, "NONE");
-
         assertEquals(LobbyRole.NONE, guest.getRole());
         assertNull(guest.getStance());
         assertFalse(guest.isReady());
@@ -80,26 +95,76 @@ class RoomServiceRoleTest {
         guest.setRole(LobbyRole.GUEST);
         guest.setReady(true);
         guest.setStance(Stance.CON);
-        when(players.findById(12L)).thenReturn(Optional.of(guest));
-
+        assignRoster();
         service.selectRole(12L, "MODERATOR");
-
         assertEquals(LobbyRole.MODERATOR, guest.getRole());
         assertNull(guest.getStance());
         assertFalse(guest.isReady());
     }
 
     @Test
-    void proConAreNotLobbyRoles() {
-        when(players.findById(12L)).thenReturn(Optional.of(guest));
-        assertThrows(IllegalArgumentException.class, () -> service.selectRole(12L, "PRO"));
-        assertThrows(IllegalArgumentException.class, () -> service.selectRole(12L, "CON"));
+    void secondModeratorIsRejectedWithoutMutatingPlayer() {
+        Player other = newPlayer(13L, LobbyRole.MODERATOR);
+        guest.setReady(true);
+        guest.setStance(Stance.PRO);
+        assignRoster(other);
+        assertThrows(RoleFullException.class, () -> service.selectRole(12L, "MODERATOR"));
+        assertEquals(LobbyRole.NONE, guest.getRole());
+        assertTrue(guest.isReady());
+        assertEquals(Stance.PRO, guest.getStance());
+    }
+
+    @Test
+    void secondGuestCanBeSelected() {
+        assignRoster(newPlayer(13L, LobbyRole.GUEST), newPlayer(14L, LobbyRole.MODERATOR));
+        service.selectRole(12L, "GUEST");
+        assertEquals(LobbyRole.GUEST, guest.getRole());
+    }
+
+    @Test
+    void thirdGuestIsRejected() {
+        assignRoster(newPlayer(13L, LobbyRole.GUEST), newPlayer(14L, LobbyRole.GUEST));
+        assertThrows(RoleFullException.class, () -> service.selectRole(12L, "GUEST"));
         assertEquals(LobbyRole.NONE, guest.getRole());
     }
 
     @Test
+    void reselectSameRoleDoesNotCountSelfAndResetsReady() {
+        guest.setRole(LobbyRole.MODERATOR);
+        guest.setReady(true);
+        assignRoster(newPlayer(13L, LobbyRole.GUEST));
+        service.selectRole(12L, "MODERATOR");
+        assertEquals(LobbyRole.MODERATOR, guest.getRole());
+        assertFalse(guest.isReady());
+    }
+
+    @Test
+    void switchingBetweenRolesFreesFormerSlot() {
+        guest.setRole(LobbyRole.MODERATOR);
+        assignRoster(newPlayer(13L, LobbyRole.GUEST));
+        service.selectRole(12L, "GUEST");
+        assertEquals(LobbyRole.GUEST, guest.getRole());
+    }
+
+    @Test
+    void mustLockRoomBeforeReadingRoleRoster() {
+        assignRoster();
+        service.selectRole(12L, "GUEST");
+        InOrder sequence = inOrder(players, rooms);
+        sequence.verify(players).findRoomIdByPlayerId(12L);
+        sequence.verify(rooms).findByIdForUpdate(10L);
+        sequence.verify(players).findByRoomForUpdate(room);
+    }
+
+    @Test
+    void proConAreNotLobbyRoles() {
+        assertThrows(IllegalArgumentException.class, () -> service.selectRole(12L, "PRO"));
+        assertThrows(IllegalArgumentException.class, () -> service.selectRole(12L, "CON"));
+        verifyNoInteractions(players, rooms);
+    }
+
+    @Test
     void rejectsInvalidAndNullRole() {
-        when(players.findById(12L)).thenReturn(Optional.of(guest));
         assertThrows(IllegalArgumentException.class, () -> service.selectRole(12L, "ADMIN"));
         assertThrows(IllegalArgumentException.class, () -> service.selectRole(12L, null));
     }
@@ -107,18 +172,26 @@ class RoomServiceRoleTest {
     @Test
     void cannotChangeRoleAfterRoomStarts() {
         room.setStatus(RoomStatus.IN_PROGRESS);
-        when(players.findById(12L)).thenReturn(Optional.of(guest));
+        when(players.findRoomIdByPlayerId(12L)).thenReturn(Optional.of(10L));
+        when(rooms.findByIdForUpdate(10L)).thenReturn(Optional.of(room));
         assertThrows(IllegalStateException.class, () -> service.selectRole(12L, "GUEST"));
+        verify(players, never()).findByRoomForUpdate(any());
         assertEquals(LobbyRole.NONE, guest.getRole());
     }
 
     @Test
-    void missingPlayerOrDetachedPlayerCannotChoose() {
-        when(players.findById(99L)).thenReturn(Optional.empty());
+    void missingAndInvalidPlayerCannotChoose() {
+        when(players.findRoomIdByPlayerId(99L)).thenReturn(Optional.empty());
         assertThrows(IllegalArgumentException.class, () -> service.selectRole(99L, "GUEST"));
         assertThrows(IllegalArgumentException.class, () -> service.selectRole(null, "GUEST"));
-        when(players.findById(12L)).thenReturn(Optional.of(guest));
-        guest.setRoom(null);
-        assertThrows(IllegalStateException.class, () -> service.selectRole(12L, "GUEST"));
+    }
+
+    @Test
+    void playerWhoLeftWhileWaitingForLockCannotChoose() {
+        when(players.findRoomIdByPlayerId(12L)).thenReturn(Optional.of(10L));
+        when(rooms.findByIdForUpdate(10L)).thenReturn(Optional.of(room));
+        when(players.findByRoomForUpdate(room)).thenReturn(List.of(newPlayer(13L, LobbyRole.NONE)));
+        assertThrows(IllegalArgumentException.class, () -> service.selectRole(12L, "GUEST"));
+        assertEquals(LobbyRole.NONE, guest.getRole());
     }
 }

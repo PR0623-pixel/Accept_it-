@@ -2,6 +2,7 @@ package com.debate.game.service;
 
 import com.debate.game.exception.InvalidRoomCodeException;
 import com.debate.game.exception.RoomFullException;
+import com.debate.game.exception.RoleFullException;
 import com.debate.game.exception.AlreadyStartedException;
 import com.debate.game.exception.PlayerNotInRoomException;
 import com.debate.game.exception.RoomCodeGenerationException;
@@ -185,18 +186,13 @@ public class RoomService {
                         5, room.getTurnTimeLimit() * 60, room.getMaxCardCount()));
     }
 
-    // R09: role is chosen in the lobby (NONE/GUEST/MODERATOR).
-    // This legacy REST entry point is retained for Swagger tests until SET_ROLE WebSocket.
-    // R10 adds role capacity checks; R11 adds independent Ready commands.
+    // R09/R10: lobby assignment (NONE/GUEST/MODERATOR) with 1 moderator / 2 guests.
+    // Temporarily exposed as REST /api/rooms/ready until WebSocket SET_ROLE is implemented.
+    // R11 adds a separate Ready toggle; role selection always clears Ready.
     @Transactional
     public void selectRole(Long playerId, String role) {
         if (playerId == null || playerId <= 0) {
             throw new IllegalArgumentException("존재하지 않는 플레이어입니다.");
-        }
-        Player player = playerRepository.findById(playerId)
-                .orElseThrow(() -> new IllegalArgumentException("존재하지 않는 플레이어입니다."));
-        if (player.getRoom() == null || player.getRoom().getStatus() != RoomStatus.WAITING) {
-            throw new IllegalStateException("대기 중인 로비에서만 역할을 변경할 수 있습니다.");
         }
 
         LobbyRole selectedRole;
@@ -206,10 +202,44 @@ public class RoomService {
             throw new IllegalArgumentException("로비 역할은 NONE, GUEST, MODERATOR 중에서 선택해야 합니다.");
         }
 
-        // PRO and CON are chosen per procurement item, never here.
+        // First fetch only the room ID; do not load the Player entity before locking.
+        // MySQL REPEATABLE READ may otherwise retain a stale role snapshot while waiting.
+        Long roomId = playerRepository.findRoomIdByPlayerId(playerId)
+                .orElseThrow(() -> new IllegalArgumentException("존재하지 않는 플레이어입니다."));
+
+        // Same room-row lock as R05 join / R07 leave. Concurrent SET_ROLE requests
+        // for the same room are serialized until the enclosing transaction commits.
+        Room room = roomRepository.findByIdForUpdate(roomId)
+                .orElseThrow(() -> new IllegalStateException("참가 중인 방을 찾을 수 없습니다."));
+        if (room.getStatus() != RoomStatus.WAITING) {
+            throw new IllegalStateException("대기 중인 로비에서만 역할을 변경할 수 있습니다.");
+        }
+
+        // Locking read sees current committed roles even when the earlier room-ID
+        // lookup established a REPEATABLE READ snapshot. At most 3 players per room.
+        List<Player> members = playerRepository.findByRoomForUpdate(room);
+        Player player = members.stream()
+                .filter(p -> Objects.equals(p.getId(), playerId))
+                .findFirst()
+                .orElseThrow(() -> new IllegalArgumentException("해당 방의 참가자가 아닙니다."));
+
+        int limit = switch (selectedRole) {
+            case MODERATOR -> 1;
+            case GUEST -> 2;
+            case NONE -> Integer.MAX_VALUE;
+        };
+        long occupiedByOthers = members.stream()
+                .filter(p -> !Objects.equals(p.getId(), playerId))
+                .filter(p -> selectedRole == p.getRole())
+                .count();
+        if (occupiedByOthers >= limit) {
+            // No mutation on failure: original role / Ready / stance remain intact.
+            throw new RoleFullException();
+        }
+
+        // Per-item PRO/CON choices are never assigned here.
         player.setRole(selectedRole);
-        player.setStance(null); // A lobby role never grants an item-specific vote.
-        // Avoid a stale Ready flag after changing an assignment (R12 expands this).
+        player.setStance(null);
         player.setReady(false);
     }
 }
