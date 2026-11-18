@@ -108,6 +108,37 @@ public class RoomService {
         return new RoomEnterResponse(room.getRoomCode(), player.getId().toString());
     }
 
+    // R06: read-only lobby snapshot. Reused later by the WebSocket ROOM_STATE mapper.
+    @Transactional(readOnly = true)
+    public com.debate.game.dto.LobbySnapshotResponse getLobby(String roomCode) {
+        String normalizedCode = roomCode == null ? "" : roomCode.strip().toUpperCase(Locale.ROOT);
+        if (!normalizedCode.matches("[A-Z0-9]{6}")) {
+            throw new InvalidRoomCodeException("방을 찾을 수 없습니다.");
+        }
+        Room room = roomRepository.findByRoomCode(normalizedCode)
+                .orElseThrow(() -> new InvalidRoomCodeException("방을 찾을 수 없습니다."));
+        java.util.List<com.debate.game.dto.LobbySnapshotResponse.LobbyPlayer> players =
+                playerRepository.findByRoom(room).stream()
+                        .sorted(java.util.Comparator.comparing(Player::getId))
+                        .map(p -> new com.debate.game.dto.LobbySnapshotResponse.LobbyPlayer(
+                                p.getId().toString(), p.getPlayerName(),
+                                p.getRole() == DebateRole.MODERATOR ? "MODERATOR" : "NONE",
+                                p.isReady(),
+                                room.getHostPlayer() != null &&
+                                        java.util.Objects.equals(room.getHostPlayer().getId(), p.getId())))
+                        .toList();
+        // maxItems is a provisional lobby default until the settings persistence stage.
+        // Existing turnTimeLimit is in minutes; frontend itemSeconds is seconds.
+        return new com.debate.game.dto.LobbySnapshotResponse(
+                room.getRoomCode(),
+                room.getHostPlayer() == null ? null : room.getHostPlayer().getId().toString(),
+                room.getStatus() == RoomStatus.WAITING ? "LOBBY" :
+                        room.getStatus() == RoomStatus.FINISHED ? "RESULT" : "VOTING",
+                players,
+                new com.debate.game.dto.LobbySnapshotResponse.LobbySettings(
+                        5, room.getTurnTimeLimit() * 60, room.getMaxCardCount()));
+    }
+
     // 3. 역할군 선정 (찬성, 반대, 사회자)
     @Transactional
     public void selectRole(Long playerId, String role) {

@@ -65,6 +65,17 @@ public class RoomController {
         return ResponseEntity.ok(roomService.joinRoom(roomCode, nickname));
     }
 
+    // R06: inspection endpoint. Frontend currently consumes WebSocket ROOM_STATE, not this REST route.
+    @Operation(summary = "로비 정보 조회", description = "방 코드, Host, 참가자, 역할, Ready 및 설정값을 조회합니다. WebSocket ROOM_STATE 연동은 추후 단계입니다.")
+    @ApiResponses({
+        @ApiResponse(responseCode = "200", description = "조회 성공"),
+        @ApiResponse(responseCode = "404", description = "ROOM_NOT_FOUND", content = @Content(schema = @Schema(implementation = ErrorResponse.class)))
+    })
+    @GetMapping("/{roomCode}")
+    public ResponseEntity<com.debate.game.dto.LobbySnapshotResponse> getLobby(@PathVariable String roomCode) {
+        return ResponseEntity.ok(roomService.getLobby(roomCode));
+    }
+
     // 3. 누른 사람 역할군에 맞는 맵핑 (준비 완료)[cite: 1]
     @Operation(summary = "역할 선택 및 준비 완료", description = "PRO, CON, MODERATOR 중 중복되지 않는 역할을 선택하고 준비 완료 처리합니다.")
     @ApiResponses({
