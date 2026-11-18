@@ -26,7 +26,13 @@ public class Room {
 
     private int maxCardCount; // 받는 카드 수 제한
 
-    private int turnTimeLimit; // 턴 시간 제한 (3~20분)
+    // Legacy column: minutes per procurement item. API uses itemSeconds (x60).
+    private int turnTimeLimit;
+
+    // R13: five persisted game settings (the other two are maxCardCount/turnTimeLimit).
+    private int maxItems = 3;
+    private int speechSeconds = 120;
+    private int rebuttalSeconds = 60;
 
     @ManyToOne(fetch = FetchType.LAZY)
     @JoinColumn(name = "current_item_id")

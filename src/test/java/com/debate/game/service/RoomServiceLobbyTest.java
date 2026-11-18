@@ -32,6 +32,7 @@ class RoomServiceLobbyTest {
     @Test void returnsLobbySnapshotWithHostAndPlayers() {
         Room room = new Room(); room.setRoomCode("ABC123"); room.setStatus(RoomStatus.WAITING);
         room.setMaxCardCount(3); room.setTurnTimeLimit(5);
+        room.setMaxItems(4); room.setSpeechSeconds(150); room.setRebuttalSeconds(75);
         Player host = new Player(); host.setId(1L); host.setPlayerName("Host"); host.setRoom(room);
         Player guest = new Player(); guest.setId(2L); guest.setPlayerName("Guest"); guest.setRoom(room); guest.setRole(LobbyRole.GUEST);
         room.setHostPlayer(host);
@@ -48,6 +49,9 @@ class RoomServiceLobbyTest {
         assertEquals("NONE", result.players().get(0).role());
         assertEquals(300, result.settings().itemSeconds());
         assertEquals(3, result.settings().cardsPerItem());
+        assertEquals(4, result.settings().maxItems());
+        assertEquals(150, result.settings().speechSeconds());
+        assertEquals(75, result.settings().rebuttalSeconds());
     }
 
     @Test void missingRoomReturnsRoomNotFoundException() {

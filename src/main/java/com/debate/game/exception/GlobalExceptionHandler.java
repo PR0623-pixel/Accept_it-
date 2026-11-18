@@ -33,6 +33,11 @@ public class GlobalExceptionHandler extends ResponseEntityExceptionHandler {
         return error(HttpStatus.NOT_FOUND, "PLAYER_NOT_IN_ROOM", "해당 방의 참가자를 찾을 수 없습니다.");
     }
 
+    @ExceptionHandler(NotHostException.class)
+    public ResponseEntity<Object> handleNotHost(NotHostException e) {
+        return error(HttpStatus.FORBIDDEN, "NOT_HOST", e.getMessage());
+    }
+
     @ExceptionHandler(RoleFullException.class)
     public ResponseEntity<Object> handleRoleFull(RoleFullException e) {
         return error(HttpStatus.CONFLICT, "ROLE_FULL", e.getMessage());

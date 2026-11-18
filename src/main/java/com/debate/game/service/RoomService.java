@@ -9,6 +9,8 @@ import com.debate.game.exception.PlayerNotInRoomException;
 import com.debate.game.exception.RoomCodeGenerationException;
 import com.debate.game.validation.NicknameValidator;
 import com.debate.game.dto.RoomEnterResponse;
+import com.debate.game.dto.RoomSettingsUpdateRequest;
+import com.debate.game.exception.NotHostException;
 import com.debate.game.entity.Player;
 import com.debate.game.entity.enums.RoomStatus;
 import com.debate.game.entity.Room;
@@ -37,7 +39,7 @@ public class RoomService {
 
     // R02: create a room and its Host player atomically.
     // R03: pre-check and 5 retries; database UNIQUE handles rare concurrent collisions.
-    // Game settings policy is R13/R14.
+    // R13 persists five settings. R14 will enforce the final limits.
     @Transactional
     public RoomEnterResponse createRoom(String nickname, Integer maxCardCount, Integer turnTimeLimit) {
         // Validate before any database write, reusing the tested R01 rules.
@@ -66,6 +68,11 @@ public class RoomService {
         room.setRoomCode(roomCode);
         room.setMaxCardCount(cards);
         room.setTurnTimeLimit(minutes);
+        // Defaults follow the existing frontend mock: 3 items, 300 seconds/item,
+        // 3 cards/item; speech 120s and rebuttal 60s.
+        room.setMaxItems(3);
+        room.setSpeechSeconds(120);
+        room.setRebuttalSeconds(60);
         roomRepository.save(room);
 
         Player host = new Player();
@@ -175,8 +182,7 @@ public class RoomService {
                                 room.getHostPlayer() != null &&
                                         java.util.Objects.equals(room.getHostPlayer().getId(), p.getId())))
                         .toList();
-        // maxItems is a provisional lobby default until the settings persistence stage.
-        // Existing turnTimeLimit is in minutes; frontend itemSeconds is seconds.
+        // Frontend itemSeconds is seconds; the existing DB column is minutes.
         return new com.debate.game.dto.LobbySnapshotResponse(
                 room.getRoomCode(),
                 room.getHostPlayer() == null ? null : room.getHostPlayer().getId().toString(),
@@ -184,7 +190,64 @@ public class RoomService {
                         room.getStatus() == RoomStatus.FINISHED ? "RESULT" : "VOTING",
                 players,
                 new com.debate.game.dto.LobbySnapshotResponse.LobbySettings(
-                        5, room.getTurnTimeLimit() * 60, room.getMaxCardCount()));
+                        room.getMaxItems(), room.getTurnTimeLimit() * 60,
+                        room.getMaxCardCount(), room.getSpeechSeconds(),
+                        room.getRebuttalSeconds()));
+    }
+
+    // R13: persist all five room settings in the WAITING lobby.
+    // This temporary REST route identifies the caller via playerId; authenticated
+    // WebSocket Host permissions will be finalized in R15/W-stage.
+    @Transactional
+    public void updateSettings(String roomCode, Long playerId, RoomSettingsUpdateRequest settings) {
+        if (settings == null) {
+            throw new IllegalArgumentException("설정 요청이 필요합니다.");
+        }
+        // R13: basic validity only. Exact min/max limits are R14's responsibility.
+        int cards = positive(settings.cardsPerItem(), "cardsPerItem");
+        int speech = positive(settings.speechSeconds(), "speechSeconds");
+        int rebuttal = positive(settings.rebuttalSeconds(), "rebuttalSeconds");
+        int item = positive(settings.itemSeconds(), "itemSeconds");
+        int items = positive(settings.maxItems(), "maxItems");
+        if (item % 60 != 0) {
+            throw new IllegalArgumentException("itemSeconds는 60초 단위여야 합니다.");
+        }
+        String normalizedCode = roomCode == null ? "" : roomCode.strip().toUpperCase(Locale.ROOT);
+        if (!normalizedCode.matches("[A-Z0-9]{6}")) {
+            throw new InvalidRoomCodeException("방을 찾을 수 없습니다.");
+        }
+        if (playerId == null || playerId <= 0) {
+            throw new PlayerNotInRoomException();
+        }
+
+        // Same room -> players locking order used by R05/R10/R11.
+        Room room = roomRepository.findByRoomCodeForUpdate(normalizedCode)
+                .orElseThrow(() -> new InvalidRoomCodeException("방을 찾을 수 없습니다."));
+        if (room.getStatus() != RoomStatus.WAITING) {
+            throw new AlreadyStartedException();
+        }
+        if (room.getHostPlayer() == null ||
+                !Objects.equals(room.getHostPlayer().getId(), playerId)) {
+            throw new NotHostException();
+        }
+
+        room.setMaxCardCount(cards);
+        room.setSpeechSeconds(speech);
+        room.setRebuttalSeconds(rebuttal);
+        room.setTurnTimeLimit(item / 60); // Legacy column stores minutes.
+        room.setMaxItems(items);
+
+        // Frontend mock clears everyone's Ready after UPDATE_SETTINGS.
+        for (Player member : playerRepository.findByRoomForUpdate(room)) {
+            member.setReady(false);
+        }
+    }
+
+    private static int positive(Integer value, String name) {
+        if (value == null || value <= 0) {
+            throw new IllegalArgumentException(name + "는 양수여야 합니다.");
+        }
+        return value;
     }
 
     // R09/R10: lobby assignment (NONE/GUEST/MODERATOR) with 1 moderator / 2 guests.

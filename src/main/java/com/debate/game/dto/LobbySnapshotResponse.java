@@ -11,5 +11,8 @@ public record LobbySnapshotResponse(
         LobbySettings settings
 ) {
     public record LobbyPlayer(String id, String nickname, String role, boolean ready, boolean isHost) {}
-    public record LobbySettings(int maxItems, int itemSeconds, int cardsPerItem) {}
+    // The frontend currently consumes the first three keys. The extra two are
+    // persisted backend settings until the frontend adds editable controls.
+    public record LobbySettings(int maxItems, int itemSeconds, int cardsPerItem,
+                                int speechSeconds, int rebuttalSeconds) {}
 }

@@ -2,6 +2,7 @@
 package com.debate.game.controller;
 
 import com.debate.game.dto.RoleSelectRequest;
+import com.debate.game.dto.RoomSettingsUpdateRequest;
 import com.debate.game.dto.ReadyToggleRequest;
 import com.debate.game.dto.JoinRoomRequest;
 import com.debate.game.dto.RoomCreateRequest;
@@ -91,6 +92,26 @@ public class RoomController {
     @GetMapping("/{roomCode}")
     public ResponseEntity<com.debate.game.dto.LobbySnapshotResponse> getLobby(@PathVariable String roomCode) {
         return ResponseEntity.ok(roomService.getLobby(roomCode));
+    }
+
+    // R13: temporary REST settings endpoint for Swagger verification.
+    // Frontend uses WebSocket UPDATE_SETTINGS, not this REST route.
+    @Operation(summary = "방 게임 설정 다섯 항목 저장 (임시 REST)",
+            description = "카드 수, 발언 시간, 반론 시간, 물품당 시간, 물품 수를 저장합니다. " +
+                    "설정 변경 시 전원 Ready가 해제됩니다. R14에서 최종 범위를 검증하고, " +
+                    "R15에서 인증된 Host 권한 연동을 완성합니다.")
+    @ApiResponses({
+        @ApiResponse(responseCode = "204", description = "설정 저장 성공"),
+        @ApiResponse(responseCode = "400", description = "누락된 설정 또는 잘못된 값"),
+        @ApiResponse(responseCode = "403", description = "NOT_HOST: Host만 변경 가능"),
+        @ApiResponse(responseCode = "404", description = "ROOM_NOT_FOUND 또는 PLAYER_NOT_IN_ROOM"),
+        @ApiResponse(responseCode = "409", description = "ALREADY_STARTED")
+    })
+    @PutMapping("/{roomCode}/settings")
+    public ResponseEntity<Void> updateSettings(@PathVariable String roomCode,
+            @RequestBody RoomSettingsUpdateRequest request) {
+        roomService.updateSettings(roomCode, request.playerIdAsLong(), request);
+        return ResponseEntity.noContent().build();
     }
 
     // R09/R10: temporary REST inspection route; SET_ROLE will use WebSocket.
