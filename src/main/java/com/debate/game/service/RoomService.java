@@ -8,6 +8,7 @@ import com.debate.game.exception.AlreadyStartedException;
 import com.debate.game.exception.PlayerNotInRoomException;
 import com.debate.game.exception.RoomCodeGenerationException;
 import com.debate.game.validation.NicknameValidator;
+import com.debate.game.validation.RoomSettingsPolicy;
 import com.debate.game.dto.RoomEnterResponse;
 import com.debate.game.dto.RoomSettingsUpdateRequest;
 import com.debate.game.exception.NotHostException;
@@ -39,16 +40,13 @@ public class RoomService {
 
     // R02: create a room and its Host player atomically.
     // R03: pre-check and 5 retries; database UNIQUE handles rare concurrent collisions.
-    // R13 persists five settings. R14 will enforce the final limits.
+    // R13 persists five settings; R14 validates them through RoomSettingsPolicy.
     @Transactional
     public RoomEnterResponse createRoom(String nickname, Integer maxCardCount, Integer turnTimeLimit) {
         // Validate before any database write, reusing the tested R01 rules.
         String normalizedName = nicknameValidator.normalizeAndValidate(nickname);
-        int cards = maxCardCount == null ? 3 : maxCardCount;
-        int minutes = turnTimeLimit == null ? 5 : turnTimeLimit;
-        if (cards <= 0 || minutes <= 0) {
-            throw new IllegalArgumentException("방 설정은 양수여야 합니다.");
-        }
+        int cards = RoomSettingsPolicy.initialCardsPerItem(maxCardCount);
+        int minutes = RoomSettingsPolicy.initialItemMinutes(turnTimeLimit);
 
         // Try another code if it already exists. The DB UNIQUE constraint is the
         // final safeguard against concurrent requests choosing the same code.
@@ -70,9 +68,9 @@ public class RoomService {
         room.setTurnTimeLimit(minutes);
         // Defaults follow the existing frontend mock: 3 items, 300 seconds/item,
         // 3 cards/item; speech 120s and rebuttal 60s.
-        room.setMaxItems(3);
-        room.setSpeechSeconds(120);
-        room.setRebuttalSeconds(60);
+        room.setMaxItems(RoomSettingsPolicy.DEFAULT_MAX_ITEMS);
+        room.setSpeechSeconds(RoomSettingsPolicy.DEFAULT_SPEECH_SECONDS);
+        room.setRebuttalSeconds(RoomSettingsPolicy.DEFAULT_REBUTTAL_SECONDS);
         roomRepository.save(room);
 
         Player host = new Player();
@@ -203,15 +201,12 @@ public class RoomService {
         if (settings == null) {
             throw new IllegalArgumentException("설정 요청이 필요합니다.");
         }
-        // R13: basic validity only. Exact min/max limits are R14's responsibility.
-        int cards = positive(settings.cardsPerItem(), "cardsPerItem");
-        int speech = positive(settings.speechSeconds(), "speechSeconds");
-        int rebuttal = positive(settings.rebuttalSeconds(), "rebuttalSeconds");
-        int item = positive(settings.itemSeconds(), "itemSeconds");
-        int items = positive(settings.maxItems(), "maxItems");
-        if (item % 60 != 0) {
-            throw new IllegalArgumentException("itemSeconds는 60초 단위여야 합니다.");
-        }
+        // Validate ALL inputs before locking or writing anything to the database.
+        int cards = RoomSettingsPolicy.cardsPerItem(settings.cardsPerItem());
+        int speech = RoomSettingsPolicy.speechSeconds(settings.speechSeconds());
+        int rebuttal = RoomSettingsPolicy.rebuttalSeconds(settings.rebuttalSeconds());
+        int item = RoomSettingsPolicy.itemSeconds(settings.itemSeconds());
+        int items = RoomSettingsPolicy.maxItems(settings.maxItems());
         String normalizedCode = roomCode == null ? "" : roomCode.strip().toUpperCase(Locale.ROOT);
         if (!normalizedCode.matches("[A-Z0-9]{6}")) {
             throw new InvalidRoomCodeException("방을 찾을 수 없습니다.");
@@ -243,15 +238,8 @@ public class RoomService {
         }
     }
 
-    private static int positive(Integer value, String name) {
-        if (value == null || value <= 0) {
-            throw new IllegalArgumentException(name + "는 양수여야 합니다.");
-        }
-        return value;
-    }
-
     // R09/R10: lobby assignment (NONE/GUEST/MODERATOR) with 1 moderator / 2 guests.
-    // Temporarily exposed as REST /api/rooms/ready until WebSocket SET_ROLE is implemented.
+    // Temporarily exposed as REST /api/rooms/{roomCode}/role until WebSocket SET_ROLE is implemented.
     // R12: a successful SET_ROLE (even reselecting the same role) clears Ready,
     // while a ROLE_FULL rejection leaves the original role/Ready/stance intact.
     // setReady below is independent of role selection.

@@ -73,6 +73,12 @@ public class GlobalExceptionHandler extends ResponseEntityExceptionHandler {
         return error(HttpStatus.BAD_GATEWAY, "AI_SERVICE_ERROR", "AI 서비스 요청을 처리하지 못했습니다.");
     }
 
+    // Only our dedicated settings exception exposes field-level validation details.
+    @ExceptionHandler(InvalidRoomSettingsException.class)
+    public ResponseEntity<Object> handleInvalidRoomSettings(InvalidRoomSettingsException e) {
+        return error(HttpStatus.BAD_REQUEST, "BAD_REQUEST", e.getMessage());
+    }
+
     @ExceptionHandler(IllegalArgumentException.class)
     public ResponseEntity<Object> handleIllegalArgument(IllegalArgumentException e) {
         return standard(HttpStatus.BAD_REQUEST, HttpHeaders.EMPTY);

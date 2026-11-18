@@ -11,9 +11,9 @@ public class RoomCreateRequest {
             example = "홍길동", requiredMode = Schema.RequiredMode.REQUIRED, maxLength = 10)
     private String nickname;
 
-    @Schema(description = "Optional legacy card count. Defaults to 3; full settings contract is R13/R14.", example = "3")
+    @Schema(description = "Optional legacy card count (1~5). Defaults to 3; full settings UI uses UPDATE_SETTINGS.", example = "3")
     private Integer maxCardCount;
 
-    @Schema(description = "Optional legacy time limit in minutes. Defaults to 5; full settings contract is R13/R14.", example = "5")
+    @Schema(description = "Optional legacy time limit (3~20 minutes). Defaults to 5; full settings UI uses UPDATE_SETTINGS.", example = "5")
     private Integer turnTimeLimit;
 }

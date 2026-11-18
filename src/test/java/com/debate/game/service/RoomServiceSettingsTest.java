@@ -117,4 +117,38 @@ class RoomServiceSettingsTest {
         when(rooms.findByRoomCodeForUpdate("ABC123")).thenReturn(Optional.empty());
         assertThrows(InvalidRoomCodeException.class, () -> service.updateSettings("ABC123", 11L, input()));
     }
+    @Test
+    void r14RejectsOutOfRangeBeforeDatabaseAndPreservesReady() {
+        RoomSettingsUpdateRequest[] invalid = {
+            new RoomSettingsUpdateRequest("11", 6, 120, 60, 300, 3),
+            new RoomSettingsUpdateRequest("11", 3, 120, 60, 300, 6),
+            new RoomSettingsUpdateRequest("11", 3, 120, 60, 120, 3),
+            new RoomSettingsUpdateRequest("11", 3, 120, 60, 1260, 3),
+            new RoomSettingsUpdateRequest("11", 3, 120, 60, 479, 3),
+            new RoomSettingsUpdateRequest("11", 3, 0, 60, 300, 3),
+            new RoomSettingsUpdateRequest("11", 3, 120, 3601, 300, 3),
+            new RoomSettingsUpdateRequest("11", 3, 120, 60, 300, null)
+        };
+        for (RoomSettingsUpdateRequest input : invalid) {
+            assertThrows(IllegalArgumentException.class,
+                    () -> service.updateSettings("ABC123", 11L, input));
+        }
+        verifyNoInteractions(rooms, players);
+        assertTrue(host.isReady());
+        assertTrue(guest.isReady());
+    }
+
+    @Test
+    void r14AcceptsFrontendBoundarySettings() {
+        when(rooms.findByRoomCodeForUpdate("ABC123")).thenReturn(Optional.of(room));
+        when(players.findByRoomForUpdate(room)).thenReturn(List.of(host, guest));
+        service.updateSettings("ABC123", 11L,
+                new RoomSettingsUpdateRequest("11", 1, 1, 3600, 180, 1));
+        assertEquals(1, room.getMaxCardCount());
+        assertEquals(3, room.getTurnTimeLimit());
+        assertEquals(1, room.getMaxItems());
+        assertFalse(host.isReady());
+        assertFalse(guest.isReady());
+    }
+
 }
