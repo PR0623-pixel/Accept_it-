@@ -3,6 +3,7 @@ package com.debate.game.service;
 import com.debate.game.exception.InvalidRoomCodeException;
 import com.debate.game.exception.RoomFullException;
 import com.debate.game.validation.NicknameValidator;
+import com.debate.game.dto.RoomEnterResponse;
 import com.debate.game.entity.Player;
 import com.debate.game.entity.Room;
 import com.debate.game.entity.enums.DebateRole;
@@ -22,18 +23,37 @@ public class RoomService {
     private final PlayerRepository playerRepository;
     private final NicknameValidator nicknameValidator;
 
-    // 1. 방 생성 (Host)
+    // R02: create a room and its Host player atomically.
+    // Code uniqueness/retries are left to R03; game settings policy is R13/R14.
     @Transactional
-    public String createRoom(int maxCardCount, int turnTimeLimit) {
+    public RoomEnterResponse createRoom(String nickname, Integer maxCardCount, Integer turnTimeLimit) {
+        // Validate before any database write, reusing the tested R01 rules.
+        String normalizedName = nicknameValidator.normalizeAndValidate(nickname);
+        int cards = maxCardCount == null ? 3 : maxCardCount;
+        int minutes = turnTimeLimit == null ? 5 : turnTimeLimit;
+        if (cards <= 0 || minutes <= 0) {
+            throw new IllegalArgumentException("방 설정은 양수여야 합니다.");
+        }
+
         Room room = new Room();
-        // 6자리 난수 코드 생성 (간단한 예시)
         String roomCode = UUID.randomUUID().toString().substring(0, 6).toUpperCase();
         room.setRoomCode(roomCode);
-        room.setMaxCardCount(maxCardCount); // 1개의 쟁점에 대한 최대 카드 매수
-        room.setTurnTimeLimit(turnTimeLimit); // 턴 시간 설정
-
+        room.setMaxCardCount(cards);
+        room.setTurnTimeLimit(minutes);
         roomRepository.save(room);
-        return roomCode;
+
+        Player host = new Player();
+        host.setRoom(room);
+        host.setPlayerName(normalizedName);
+        // Leave role null (= no lobby role selected); R09 will introduce LobbyRole.NONE.
+        // The Host permission is stored separately on Room, never in DebateRole.
+        host.setReady(false);
+        playerRepository.save(host);
+
+        // The same @Transactional boundary commits room, player and host reference together.
+        room.setHostPlayer(host);
+        roomRepository.save(room); // update host_player_id (also explicit for detached repository mocks)
+        return new RoomEnterResponse(roomCode, host.getId().toString());
     }
 
     // 2. 방 입장 (Join) 및 3명 인원 제한 체크

@@ -4,6 +4,7 @@ package com.debate.game.controller;
 import com.debate.game.dto.RoleSelectRequest;
 import com.debate.game.dto.JoinRoomRequest;
 import com.debate.game.dto.RoomCreateRequest;
+import com.debate.game.dto.RoomEnterResponse;
 import com.debate.game.service.RoomService;
 import lombok.RequiredArgsConstructor;
 import io.swagger.v3.oas.annotations.Operation;
@@ -24,16 +25,21 @@ public class RoomController {
 
     private final RoomService roomService;
 
-    // 1. 방 만들기 버튼 클릭 시[cite: 1]
-    @Operation(summary = "방 생성", description = "카드 수와 턴 시간 설정을 저장하고 6자리 방 코드를 반환합니다.")
+    // R02: the frontend creates the room with { "nickname": "..." }.
+    @Operation(summary = "방 생성 및 Host 등록",
+            description = "닉네임을 검증한 뒤 방과 Host 플레이어를 함께 저장하고 roomCode/playerId를 반환합니다. " +
+                    "Host 권한은 로비 역할과 별도입니다. 방 코드 충돌 재시도는 R03에서 처리합니다.")
     @ApiResponses({
-        @ApiResponse(responseCode = "400", description = "잘못된 요청",
+        @ApiResponse(responseCode = "200", description = "방 생성 성공",
+                content = @Content(schema = @Schema(implementation = RoomEnterResponse.class))),
+        @ApiResponse(responseCode = "400", description = "잘못된 닉네임 또는 방 설정",
                 content = @Content(schema = @Schema(implementation = ErrorResponse.class)))
     })
     @PostMapping
-    public ResponseEntity<String> createRoom(@RequestBody RoomCreateRequest request) {
-        String roomCode = roomService.createRoom(request.getMaxCardCount(), request.getTurnTimeLimit());
-        return ResponseEntity.ok(roomCode);
+    public ResponseEntity<RoomEnterResponse> createRoom(@RequestBody RoomCreateRequest request) {
+        RoomEnterResponse result = roomService.createRoom(
+                request.getNickname(), request.getMaxCardCount(), request.getTurnTimeLimit());
+        return ResponseEntity.ok(result);
     }
 
     // 2. 방 Code 입력 후 Join 클릭 시[cite: 1]
