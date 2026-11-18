@@ -21,15 +21,17 @@ import static org.mockito.Mockito.*;
 class RoomServiceHostTest {
     @Mock private RoomRepository roomRepository;
     @Mock private PlayerRepository playerRepository;
+    @Mock private RoomCodeGenerator roomCodeGenerator;
     private RoomService service;
 
     @BeforeEach
     void setUp() {
-        service = new RoomService(roomRepository, playerRepository, new NicknameValidator());
+        service = new RoomService(roomRepository, playerRepository, new NicknameValidator(), roomCodeGenerator);
     }
 
     @Test
     void createRoomPersistsHostWithNormalizedNameAndNoAssignedRole() {
+        when(roomCodeGenerator.generate()).thenReturn("ABC123");
         when(roomRepository.save(any(Room.class))).thenAnswer(i -> {
             Room r = i.getArgument(0);
             r.setId(10L);

@@ -2,6 +2,7 @@ package com.debate.game.service;
 
 import com.debate.game.exception.InvalidRoomCodeException;
 import com.debate.game.exception.RoomFullException;
+import com.debate.game.exception.RoomCodeGenerationException;
 import com.debate.game.validation.NicknameValidator;
 import com.debate.game.dto.RoomEnterResponse;
 import com.debate.game.entity.Player;
@@ -13,7 +14,6 @@ import lombok.RequiredArgsConstructor;
 import org.springframework.stereotype.Service;
 import org.springframework.transaction.annotation.Transactional;
 
-import java.util.UUID;
 
 @Service
 @RequiredArgsConstructor
@@ -22,9 +22,13 @@ public class RoomService {
     private final RoomRepository roomRepository;
     private final PlayerRepository playerRepository;
     private final NicknameValidator nicknameValidator;
+    private final RoomCodeGenerator roomCodeGenerator;
+
+    private static final int MAX_CODE_ATTEMPTS = 5;
 
     // R02: create a room and its Host player atomically.
-    // Code uniqueness/retries are left to R03; game settings policy is R13/R14.
+    // R03: pre-check and 5 retries; database UNIQUE handles rare concurrent collisions.
+    // Game settings policy is R13/R14.
     @Transactional
     public RoomEnterResponse createRoom(String nickname, Integer maxCardCount, Integer turnTimeLimit) {
         // Validate before any database write, reusing the tested R01 rules.
@@ -35,8 +39,21 @@ public class RoomService {
             throw new IllegalArgumentException("방 설정은 양수여야 합니다.");
         }
 
+        // Try another code if it already exists. The DB UNIQUE constraint is the
+        // final safeguard against concurrent requests choosing the same code.
+        String roomCode = null;
+        for (int i = 0; i < MAX_CODE_ATTEMPTS; i++) {
+            String candidate = roomCodeGenerator.generate();
+            if (!roomRepository.existsByRoomCode(candidate)) {
+                roomCode = candidate;
+                break;
+            }
+        }
+        if (roomCode == null) {
+            throw new RoomCodeGenerationException();
+        }
+
         Room room = new Room();
-        String roomCode = UUID.randomUUID().toString().substring(0, 6).toUpperCase();
         room.setRoomCode(roomCode);
         room.setMaxCardCount(cards);
         room.setTurnTimeLimit(minutes);

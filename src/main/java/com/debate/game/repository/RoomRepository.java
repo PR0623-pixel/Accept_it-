@@ -15,6 +15,8 @@ public interface RoomRepository extends JpaRepository<Room, Long> {
     // Room.sql에 SELECT * FROM room WHERE room_code = ? 라고 짤 필요가 X
     Optional<Room> findByRoomCode(String roomCode);
 
+    boolean existsByRoomCode(String roomCode);
+
     // 발언 처리 중 같은 방에 대한 동시 요청이 차례를 중복 진행하지 않도록 행을 잠근다.
     @Lock(LockModeType.PESSIMISTIC_WRITE)
     @Query("select r from Room r where r.id = :id")

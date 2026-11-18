@@ -23,6 +23,11 @@ public class GlobalExceptionHandler extends ResponseEntityExceptionHandler {
         return error(HttpStatus.BAD_REQUEST, "INVALID_ROOM_CODE", "존재하지 않는 방 코드입니다.");
     }
 
+    @ExceptionHandler(RoomCodeGenerationException.class)
+    public ResponseEntity<Object> handleRoomCodeGeneration(RoomCodeGenerationException e) {
+        return error(HttpStatus.SERVICE_UNAVAILABLE, "ROOM_CODE_GENERATION_FAILED", e.getMessage());
+    }
+
     @ExceptionHandler(RoomFullException.class)
     public ResponseEntity<Object> handleRoomFull(RoomFullException e) {
         return error(HttpStatus.CONFLICT, "ROOM_FULL", "방 인원이 초과되었습니다. (최대 3명)");

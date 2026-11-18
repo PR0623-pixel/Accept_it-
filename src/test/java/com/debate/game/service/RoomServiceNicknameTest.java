@@ -27,7 +27,7 @@ class RoomServiceNicknameTest {
 
     @BeforeEach
     void setUp() {
-        service = new RoomService(roomRepository, playerRepository, new NicknameValidator());
+        service = new RoomService(roomRepository, playerRepository, new NicknameValidator(), mock(RoomCodeGenerator.class));
         room = new Room();
         room.setRoomCode("ABC123");
     }

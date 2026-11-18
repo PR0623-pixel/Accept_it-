@@ -28,11 +28,13 @@ public class RoomController {
     // R02: the frontend creates the room with { "nickname": "..." }.
     @Operation(summary = "방 생성 및 Host 등록",
             description = "닉네임을 검증한 뒤 방과 Host 플레이어를 함께 저장하고 roomCode/playerId를 반환합니다. " +
-                    "Host 권한은 로비 역할과 별도입니다. 방 코드 충돌 재시도는 R03에서 처리합니다.")
+                    "Host 권한은 로비 역할과 별도입니다. 방 코드는 6자리 영숫자로 발급하며 중복 시 최대 5회 재생성합니다.")
     @ApiResponses({
         @ApiResponse(responseCode = "200", description = "방 생성 성공",
                 content = @Content(schema = @Schema(implementation = RoomEnterResponse.class))),
         @ApiResponse(responseCode = "400", description = "잘못된 닉네임 또는 방 설정",
+                content = @Content(schema = @Schema(implementation = ErrorResponse.class))),
+        @ApiResponse(responseCode = "503", description = "사용 가능한 방 코드 발급 실패",
                 content = @Content(schema = @Schema(implementation = ErrorResponse.class)))
     })
     @PostMapping
