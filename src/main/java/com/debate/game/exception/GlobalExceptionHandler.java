@@ -38,6 +38,16 @@ public class GlobalExceptionHandler extends ResponseEntityExceptionHandler {
         return error(HttpStatus.CONFLICT, "ROLE_FULL", e.getMessage());
     }
 
+    @ExceptionHandler(RoleRequiredException.class)
+    public ResponseEntity<Object> handleRoleRequired(RoleRequiredException e) {
+        return error(HttpStatus.CONFLICT, "ROLE_REQUIRED", e.getMessage());
+    }
+
+    @ExceptionHandler(NotEnoughPlayersException.class)
+    public ResponseEntity<Object> handleNotEnoughPlayers(NotEnoughPlayersException e) {
+        return error(HttpStatus.CONFLICT, "NOT_ENOUGH_PLAYERS", e.getMessage());
+    }
+
     @ExceptionHandler(RoomFullException.class)
     public ResponseEntity<Object> handleRoomFull(RoomFullException e) {
         return error(HttpStatus.CONFLICT, "ROOM_FULL", "방이 가득 찼습니다.");

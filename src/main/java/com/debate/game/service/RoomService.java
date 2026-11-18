@@ -3,6 +3,8 @@ package com.debate.game.service;
 import com.debate.game.exception.InvalidRoomCodeException;
 import com.debate.game.exception.RoomFullException;
 import com.debate.game.exception.RoleFullException;
+import com.debate.game.exception.RoleRequiredException;
+import com.debate.game.exception.NotEnoughPlayersException;
 import com.debate.game.exception.AlreadyStartedException;
 import com.debate.game.exception.PlayerNotInRoomException;
 import com.debate.game.exception.RoomCodeGenerationException;
@@ -188,7 +190,7 @@ public class RoomService {
 
     // R09/R10: lobby assignment (NONE/GUEST/MODERATOR) with 1 moderator / 2 guests.
     // Temporarily exposed as REST /api/rooms/ready until WebSocket SET_ROLE is implemented.
-    // R11 adds a separate Ready toggle; role selection always clears Ready.
+    // R11: role selection continues to clear Ready; setReady below changes it independently.
     @Transactional
     public void selectRole(Long playerId, String role) {
         if (playerId == null || playerId <= 0) {
@@ -241,5 +243,43 @@ public class RoomService {
         player.setRole(selectedRole);
         player.setStance(null);
         player.setReady(false);
+    }
+    // R11: separate Ready/Ready-cancel action. Reuse R05/R10 room-then-player
+    // locking order to serialize SET_READY with joins, leaves and role changes.
+    // WebSocket will call this method on SET_READY; temporary REST is for Swagger.
+    @Transactional
+    public void setReady(String roomCode, Long playerId, boolean ready) {
+        String normalizedCode = roomCode == null ? "" : roomCode.strip().toUpperCase(Locale.ROOT);
+        if (!normalizedCode.matches("[A-Z0-9]{6}")) {
+            throw new InvalidRoomCodeException("방을 찾을 수 없습니다.");
+        }
+        if (playerId == null || playerId <= 0) {
+            throw new PlayerNotInRoomException();
+        }
+
+        // Acquire room lock FIRST, just like join/leave/SET_ROLE.
+        Room room = roomRepository.findByRoomCodeForUpdate(normalizedCode)
+                .orElseThrow(() -> new InvalidRoomCodeException("방을 찾을 수 없습니다."));
+        if (room.getStatus() != RoomStatus.WAITING) {
+            throw new AlreadyStartedException();
+        }
+
+        // A locking read avoids stale role/member counts on MySQL REPEATABLE READ.
+        List<Player> members = playerRepository.findByRoomForUpdate(room);
+        Player player = members.stream()
+                .filter(p -> Objects.equals(p.getId(), playerId))
+                .findFirst()
+                .orElseThrow(PlayerNotInRoomException::new);
+
+        if (ready) {
+            // Match frontend SET_READY validation order and error codes.
+            if (player.getRole() == null || player.getRole() == LobbyRole.NONE) {
+                throw new RoleRequiredException();
+            }
+        }
+
+        // Explicit assignment supports both Ready and Ready cancellation. Repeating
+        // the same value is harmless. Game start/AI generation belongs to R16/G03.
+        player.setReady(ready);
     }
 }

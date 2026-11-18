@@ -25,6 +25,8 @@ class GlobalExceptionHandlerTest {
         check("started", 409, "ALREADY_STARTED");
         check("full", 409, "ROOM_FULL");
         check("role", 409, "ROLE_FULL");
+        check("role-required", 409, "ROLE_REQUIRED");
+        check("players-required", 409, "NOT_ENOUGH_PLAYERS");
         check("config", 503, "AI_NOT_CONFIGURED");
         check("ai", 502, "AI_SERVICE_ERROR");
         check("argument", 400, "BAD_REQUEST");
@@ -63,6 +65,8 @@ class GlobalExceptionHandlerTest {
                 case "room" -> new InvalidRoomCodeException("sensitive-detail");
                 case "full" -> new RoomFullException("sensitive-detail");
                 case "role" -> new RoleFullException();
+                case "role-required" -> new RoleRequiredException();
+                case "players-required" -> new NotEnoughPlayersException();
                 case "started" -> new AlreadyStartedException();
                 case "config" -> new AiConfigurationException();
                 case "ai" -> new AiServiceException("sensitive-detail");
