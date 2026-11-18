@@ -13,6 +13,8 @@ import org.junit.jupiter.api.extension.ExtendWith;
 import org.mockito.Mock;
 import org.mockito.junit.jupiter.MockitoExtension;
 import java.util.Optional;
+import java.util.List;
+import org.mockito.InOrder;
 import static org.junit.jupiter.api.Assertions.*;
 import static org.mockito.Mockito.*;
 
@@ -42,11 +44,34 @@ class RoomServiceLeaveTest {
         verify(rooms).findByRoomCodeForUpdate("ABC123");
     }
 
-    @Test void hostCannotLeaveUntilR08() {
+    @Test void hostLeaveClosesRoomAndRemovesAllPlayersInFkSafeOrder() {
         when(rooms.findByRoomCodeForUpdate("ABC123")).thenReturn(Optional.of(room));
         when(players.findById(1L)).thenReturn(Optional.of(host));
-        assertThrows(HostLeavePendingException.class, () -> service.leaveRoom("ABC123", 1L));
+        when(players.findByRoom(room)).thenReturn(List.of(host, guest));
+
+        service.leaveRoom("abc123", 1L);
+
+        assertNull(room.getHostPlayer());
+        InOrder order = inOrder(rooms, players);
+        order.verify(rooms).findByRoomCodeForUpdate("ABC123");
+        order.verify(players).findById(1L);
+        order.verify(rooms).saveAndFlush(room); // clear room -> host FK before deletes
+        order.verify(players).findByRoom(room);
+        order.verify(players).deleteAll(List.of(host, guest));
+        order.verify(players).flush(); // delete members before deleting their room
+        order.verify(rooms).delete(room);
         verify(players, never()).delete(any(Player.class));
+    }
+
+    @Test void hostLeavingEmptyLobbyStillDeletesRoom() {
+        when(rooms.findByRoomCodeForUpdate("ABC123")).thenReturn(Optional.of(room));
+        when(players.findById(1L)).thenReturn(Optional.of(host));
+        when(players.findByRoom(room)).thenReturn(List.of(host));
+
+        service.leaveRoom("ABC123", 1L);
+
+        verify(players).deleteAll(List.of(host));
+        verify(rooms).delete(room);
     }
 
     @Test void cannotRemovePlayerFromAnotherRoom() {

@@ -3,6 +3,7 @@ package com.debate.game.service;
 import com.debate.game.exception.InvalidRoomCodeException;
 import com.debate.game.exception.RoomFullException;
 import com.debate.game.exception.AlreadyStartedException;
+import com.debate.game.exception.PlayerNotInRoomException;
 import com.debate.game.exception.RoomCodeGenerationException;
 import com.debate.game.validation.NicknameValidator;
 import com.debate.game.dto.RoomEnterResponse;
@@ -17,6 +18,8 @@ import org.springframework.stereotype.Service;
 import org.springframework.transaction.annotation.Transactional;
 
 import java.util.Locale;
+import java.util.List;
+import java.util.Objects;
 
 
 @Service
@@ -108,8 +111,8 @@ public class RoomService {
         return new RoomEnterResponse(room.getRoomCode(), player.getId().toString());
     }
 
-    // R07: remove a non-host player while holding the same room lock used by R05 joins.
-    // Host departure policy is deliberately deferred to R08.
+    // R07/R08: leave a waiting room while holding the same lock as joinRoom.
+    // Guest: remove only that player. Host: close the entire room with its members.
     @Transactional
     public void leaveRoom(String roomCode, Long playerId) {
         String normalizedCode = roomCode == null ? "" : roomCode.strip().toUpperCase(Locale.ROOT);
@@ -117,23 +120,36 @@ public class RoomService {
             throw new InvalidRoomCodeException("방을 찾을 수 없습니다.");
         }
         if (playerId == null || playerId <= 0) {
-            throw new com.debate.game.exception.PlayerNotInRoomException();
+            throw new PlayerNotInRoomException();
         }
+
         Room room = roomRepository.findByRoomCodeForUpdate(normalizedCode)
                 .orElseThrow(() -> new InvalidRoomCodeException("방을 찾을 수 없습니다."));
         if (room.getStatus() != RoomStatus.WAITING) {
             throw new AlreadyStartedException();
         }
         Player player = playerRepository.findById(playerId)
-                .orElseThrow(com.debate.game.exception.PlayerNotInRoomException::new);
-        if (player.getRoom() == null || !java.util.Objects.equals(player.getRoom().getId(), room.getId())) {
-            throw new com.debate.game.exception.PlayerNotInRoomException();
+                .orElseThrow(PlayerNotInRoomException::new);
+        if (player.getRoom() == null || !Objects.equals(player.getRoom().getId(), room.getId())) {
+            throw new PlayerNotInRoomException();
         }
+
         if (room.getHostPlayer() != null &&
-                java.util.Objects.equals(room.getHostPlayer().getId(), player.getId())) {
-            throw new com.debate.game.exception.HostLeavePendingException();
+                Objects.equals(room.getHostPlayer().getId(), player.getId())) {
+            // R08: room.host_player_id -> player.id and player.room_id -> room.id
+            // form a FK cycle. Clear and flush the Host reference BEFORE deleting players.
+            room.setHostPlayer(null);
+            roomRepository.saveAndFlush(room);
+
+            // Max three players in a WAITING room. Delete them before deleting the room.
+            List<Player> members = playerRepository.findByRoom(room);
+            playerRepository.deleteAll(members);
+            playerRepository.flush();
+            roomRepository.delete(room);
+            return;
         }
-        // Deleting the membership row removes this player from countByRoom and Ready queries.
+
+        // R07: a normal guest only frees their own slot.
         playerRepository.delete(player);
     }
 

@@ -65,12 +65,14 @@ public class RoomController {
         return ResponseEntity.ok(roomService.joinRoom(roomCode, nickname));
     }
 
-    // R07: explicit REST leave for verification. Frontend lobby transport remains WebSocket.
-    @Operation(summary = "로비 나가기", description = "대기 중인 로비에서 일반 참가자를 제거합니다. Host 퇴장은 R08에서 결정합니다.")
+    // R07/R08: REST leave endpoint; frontend lobby transport remains WebSocket.
+    @Operation(summary = "로비 나가기 / Host 방 폐쇄",
+            description = "WAITING 로비에서 일반 참가자는 본인만 퇴장하고, Host는 모든 참가자와 방을 삭제합니다. " +
+                    "Host 퇴장 시 방 코드는 즉시 무효화됩니다. WebSocket 알림은 후속 구현 범위입니다.")
     @ApiResponses({
         @ApiResponse(responseCode = "204", description = "퇴장 완료"),
         @ApiResponse(responseCode = "404", description = "ROOM_NOT_FOUND 또는 PLAYER_NOT_IN_ROOM"),
-        @ApiResponse(responseCode = "409", description = "ALREADY_STARTED 또는 HOST_LEAVE_PENDING")
+        @ApiResponse(responseCode = "409", description = "ALREADY_STARTED: 시작된 게임에서 퇴장 불가")
     })
     @PostMapping("/{roomCode}/leave")
     public ResponseEntity<Void> leaveRoom(@PathVariable String roomCode,
