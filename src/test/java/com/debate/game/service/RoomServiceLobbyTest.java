@@ -4,6 +4,7 @@ import com.debate.game.dto.LobbySnapshotResponse;
 import com.debate.game.entity.Player;
 import com.debate.game.entity.Room;
 import com.debate.game.entity.enums.RoomStatus;
+import com.debate.game.entity.enums.LobbyRole;
 import com.debate.game.exception.InvalidRoomCodeException;
 import com.debate.game.repository.PlayerRepository;
 import com.debate.game.repository.RoomRepository;
@@ -32,7 +33,7 @@ class RoomServiceLobbyTest {
         Room room = new Room(); room.setRoomCode("ABC123"); room.setStatus(RoomStatus.WAITING);
         room.setMaxCardCount(3); room.setTurnTimeLimit(5);
         Player host = new Player(); host.setId(1L); host.setPlayerName("Host"); host.setRoom(room);
-        Player guest = new Player(); guest.setId(2L); guest.setPlayerName("Guest"); guest.setRoom(room);
+        Player guest = new Player(); guest.setId(2L); guest.setPlayerName("Guest"); guest.setRoom(room); guest.setRole(LobbyRole.GUEST);
         room.setHostPlayer(host);
         when(rooms.findByRoomCode("ABC123")).thenReturn(Optional.of(room));
         when(players.findByRoom(room)).thenReturn(List.of(guest, host));
@@ -43,7 +44,8 @@ class RoomServiceLobbyTest {
         assertEquals(2, result.players().size());
         assertEquals("1", result.players().get(0).id());
         assertTrue(result.players().get(0).isHost());
-        assertEquals("NONE", result.players().get(1).role());
+        assertEquals("GUEST", result.players().get(1).role());
+        assertEquals("NONE", result.players().get(0).role());
         assertEquals(300, result.settings().itemSeconds());
         assertEquals(3, result.settings().cardsPerItem());
     }

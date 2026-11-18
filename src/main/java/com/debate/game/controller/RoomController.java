@@ -92,12 +92,12 @@ public class RoomController {
         return ResponseEntity.ok(roomService.getLobby(roomCode));
     }
 
-    // 3. 누른 사람 역할군에 맞는 맵핑 (준비 완료)[cite: 1]
-    @Operation(summary = "역할 선택 및 준비 완료", description = "PRO, CON, MODERATOR 중 중복되지 않는 역할을 선택하고 준비 완료 처리합니다.")
+    // R09: temporary REST inspection route; SET_ROLE will use WebSocket.
+    @Operation(summary = "로비 역할 선택 (임시 REST)", description = "NONE, GUEST, MODERATOR 중 로비 역할을 선택합니다. PRO/CON은 물품별 투표에서만 선택하며, 이 요청은 Ready를 false로 초기화합니다. R10에서 역할별 인원 제한, R11에서 Ready 토글을 구현합니다.")
     @ApiResponses({
         @ApiResponse(responseCode = "400", description = "존재하지 않는 플레이어 또는 잘못된 역할",
                 content = @Content(schema = @Schema(implementation = ErrorResponse.class))),
-        @ApiResponse(responseCode = "409", description = "이미 사용 중인 역할",
+        @ApiResponse(responseCode = "409", description = "진행 중인 방에서는 역할 변경 불가",
                 content = @Content(schema = @Schema(implementation = ErrorResponse.class)))
     })
     @PostMapping("/ready")

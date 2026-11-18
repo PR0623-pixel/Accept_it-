@@ -10,7 +10,7 @@ import com.debate.game.dto.RoomEnterResponse;
 import com.debate.game.entity.Player;
 import com.debate.game.entity.enums.RoomStatus;
 import com.debate.game.entity.Room;
-import com.debate.game.entity.enums.DebateRole;
+import com.debate.game.entity.enums.LobbyRole;
 import com.debate.game.repository.PlayerRepository;
 import com.debate.game.repository.RoomRepository;
 import lombok.RequiredArgsConstructor;
@@ -69,8 +69,8 @@ public class RoomService {
         Player host = new Player();
         host.setRoom(room);
         host.setPlayerName(normalizedName);
-        // Leave role null (= no lobby role selected); R09 will introduce LobbyRole.NONE.
-        // The Host permission is stored separately on Room, never in DebateRole.
+        // Host permission is independent of lobby role and per-item stance.
+        host.setRole(LobbyRole.NONE);
         host.setReady(false);
         playerRepository.save(host);
 
@@ -104,6 +104,7 @@ public class RoomService {
         Player player = new Player();
         player.setRoom(room);
         player.setPlayerName(normalizedName);
+        player.setRole(LobbyRole.NONE);
         player.setReady(false);
         playerRepository.save(player);
 
@@ -167,7 +168,7 @@ public class RoomService {
                         .sorted(java.util.Comparator.comparing(Player::getId))
                         .map(p -> new com.debate.game.dto.LobbySnapshotResponse.LobbyPlayer(
                                 p.getId().toString(), p.getPlayerName(),
-                                p.getRole() == DebateRole.MODERATOR ? "MODERATOR" : "NONE",
+                                p.getRole() == null ? LobbyRole.NONE.name() : p.getRole().name(),
                                 p.isReady(),
                                 room.getHostPlayer() != null &&
                                         java.util.Objects.equals(room.getHostPlayer().getId(), p.getId())))
@@ -184,44 +185,31 @@ public class RoomService {
                         5, room.getTurnTimeLimit() * 60, room.getMaxCardCount()));
     }
 
-    // 3. 역할군 선정 (찬성, 반대, 사회자)
+    // R09: role is chosen in the lobby (NONE/GUEST/MODERATOR).
+    // This legacy REST entry point is retained for Swagger tests until SET_ROLE WebSocket.
+    // R10 adds role capacity checks; R11 adds independent Ready commands.
     @Transactional
     public void selectRole(Long playerId, String role) {
-
+        if (playerId == null || playerId <= 0) {
+            throw new IllegalArgumentException("존재하지 않는 플레이어입니다.");
+        }
         Player player = playerRepository.findById(playerId)
-                .orElseThrow(() ->
-                        new IllegalArgumentException(
-                                "존재하지 않는 플레이어입니다."));
+                .orElseThrow(() -> new IllegalArgumentException("존재하지 않는 플레이어입니다."));
+        if (player.getRoom() == null || player.getRoom().getStatus() != RoomStatus.WAITING) {
+            throw new IllegalStateException("대기 중인 로비에서만 역할을 변경할 수 있습니다.");
+        }
 
-        Room room = player.getRoom();
-
-        // String을 DebateRole enum으로 변환
-        DebateRole selectedRole;
-
+        LobbyRole selectedRole;
         try {
-            selectedRole = DebateRole.valueOf(
-                    role.trim().toUpperCase(java.util.Locale.ROOT)
-            );
+            selectedRole = LobbyRole.valueOf(role.strip().toUpperCase(Locale.ROOT));
         } catch (IllegalArgumentException | NullPointerException e) {
-            throw new IllegalArgumentException(
-                    "올바르지 않은 역할입니다: " + role);
+            throw new IllegalArgumentException("로비 역할은 NONE, GUEST, MODERATOR 중에서 선택해야 합니다.");
         }
 
-        // 동일 방의 다른 플레이어가 역할을 선택했는지 확인
-        boolean isRoleTaken = playerRepository.findByRoom(room)
-                .stream()
-                .anyMatch(p ->
-                        !p.getId().equals(playerId)
-                                && p.getRole() == selectedRole
-                );
-
-        if (isRoleTaken) {
-            throw new IllegalStateException(
-                    "이미 다른 유저가 선택한 역할입니다.");
-        }
-
+        // PRO and CON are chosen per procurement item, never here.
         player.setRole(selectedRole);
-        player.setReady(true);
+        player.setStance(null); // A lobby role never grants an item-specific vote.
+        // Avoid a stale Ready flag after changing an assignment (R12 expands this).
+        player.setReady(false);
     }
-
 }
