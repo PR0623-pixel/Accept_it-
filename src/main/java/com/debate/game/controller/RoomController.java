@@ -100,7 +100,8 @@ public class RoomController {
             description = "카드 수, 발언 시간, 반론 시간, 물품당 시간, 물품 수를 저장합니다. " +
                     "R14 기준: cardsPerItem/maxItems=1~5, itemSeconds=180~1200(60초 단위), " +
                     "speechSeconds/rebuttalSeconds=1~3600(임시 서버 범위). " +
-                    "설정 변경 시 전원 Ready가 해제됩니다. R15/W에서 인증된 Host 권한을 연동합니다.")
+                    "설정 변경 시 전원 Ready가 해제됩니다. " +
+                    "R15에서는 소속 방 및 Host 여부를 검사하며, 연결자 신원 인증은 W 단계에서 연동합니다.")
     @ApiResponses({
         @ApiResponse(responseCode = "204", description = "설정 저장 성공"),
         @ApiResponse(responseCode = "400", description = "누락된 설정 또는 잘못된 값"),

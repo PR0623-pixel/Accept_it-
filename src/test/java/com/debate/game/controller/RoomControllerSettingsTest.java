@@ -3,6 +3,7 @@ package com.debate.game.controller;
 import com.debate.game.dto.RoomSettingsUpdateRequest;
 import com.debate.game.exception.GlobalExceptionHandler;
 import com.debate.game.exception.NotHostException;
+import com.debate.game.exception.PlayerNotInRoomException;
 import com.debate.game.exception.InvalidRoomSettingsException;
 import com.debate.game.service.RoomService;
 import org.junit.jupiter.api.BeforeEach;
@@ -70,5 +71,14 @@ class RoomControllerSettingsTest {
                 .andExpect(status().isBadRequest())
                 .andExpect(jsonPath("$.code").value("BAD_REQUEST"))
                 .andExpect(jsonPath("$.message").value("itemSeconds는 60초 단위여야 합니다."));
+    }
+    @Test
+    void foreignRoomPlayerReturns404WithoutApplyingSettings() throws Exception {
+        doThrow(new PlayerNotInRoomException()).when(service)
+                .updateSettings(eq("ABC123"), eq(11L), any(RoomSettingsUpdateRequest.class));
+        mvc.perform(put("/api/rooms/ABC123/settings")
+                        .contentType(MediaType.APPLICATION_JSON).content(json))
+                .andExpect(status().isNotFound())
+                .andExpect(jsonPath("$.code").value("PLAYER_NOT_IN_ROOM"));
     }
 }

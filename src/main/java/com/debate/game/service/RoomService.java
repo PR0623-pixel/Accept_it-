@@ -193,9 +193,9 @@ public class RoomService {
                         room.getRebuttalSeconds()));
     }
 
-    // R13: persist all five room settings in the WAITING lobby.
-    // This temporary REST route identifies the caller via playerId; authenticated
-    // WebSocket Host permissions will be finalized in R15/W-stage.
+    // R13/R14: validate and persist five settings in a WAITING lobby.
+    // R15: check actual room membership and the room's Host reference under the room lock.
+    // The REST body playerId is NOT authenticated; W-stage must supply a trusted caller ID.
     @Transactional
     public void updateSettings(String roomCode, Long playerId, RoomSettingsUpdateRequest settings) {
         if (settings == null) {
@@ -221,6 +221,15 @@ public class RoomService {
         if (room.getStatus() != RoomStatus.WAITING) {
             throw new AlreadyStartedException();
         }
+        // R15: distinguish a nonexistent/cross-room player (404) from a
+        // member who does not own Host permission (403). Read after locking Room
+        // to retain the same lock order used by join/leave/role/ready changes.
+        Long memberRoomId = playerRepository.findRoomIdByPlayerId(playerId)
+                .orElseThrow(PlayerNotInRoomException::new);
+        if (!Objects.equals(room.getId(), memberRoomId)) {
+            throw new PlayerNotInRoomException();
+        }
+        // Host permission is independent of NONE/GUEST/MODERATOR lobby roles.
         if (room.getHostPlayer() == null ||
                 !Objects.equals(room.getHostPlayer().getId(), playerId)) {
             throw new NotHostException();

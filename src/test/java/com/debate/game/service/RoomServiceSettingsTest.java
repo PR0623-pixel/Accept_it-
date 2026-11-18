@@ -52,6 +52,7 @@ class RoomServiceSettingsTest {
     @Test
     void hostUpdatesAllFiveValuesAndClearsReady() {
         when(rooms.findByRoomCodeForUpdate("ABC123")).thenReturn(Optional.of(room));
+        when(players.findRoomIdByPlayerId(11L)).thenReturn(Optional.of(3L));
         when(players.findByRoomForUpdate(room)).thenReturn(List.of(host, guest));
         service.updateSettings("abc123", 11L, input());
         assertEquals(4, room.getMaxCardCount());
@@ -83,6 +84,7 @@ class RoomServiceSettingsTest {
     @Test
     void nonHostCannotModifySettingsOrReady() {
         when(rooms.findByRoomCodeForUpdate("ABC123")).thenReturn(Optional.of(room));
+        when(players.findRoomIdByPlayerId(12L)).thenReturn(Optional.of(3L));
         assertThrows(NotHostException.class, () -> service.updateSettings("ABC123", 12L, input()));
         assertTrue(host.isReady()); assertTrue(guest.isReady());
         verify(players, never()).findByRoomForUpdate(any());
@@ -141,6 +143,7 @@ class RoomServiceSettingsTest {
     @Test
     void r14AcceptsFrontendBoundarySettings() {
         when(rooms.findByRoomCodeForUpdate("ABC123")).thenReturn(Optional.of(room));
+        when(players.findRoomIdByPlayerId(11L)).thenReturn(Optional.of(3L));
         when(players.findByRoomForUpdate(room)).thenReturn(List.of(host, guest));
         service.updateSettings("ABC123", 11L,
                 new RoomSettingsUpdateRequest("11", 1, 1, 3600, 180, 1));
