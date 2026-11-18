@@ -39,7 +39,7 @@ class RoomServiceJoinTest {
 
     @Test
     void joinsWaitingRoomAndReturnsFrontendResponse() {
-        when(roomRepository.findByRoomCode("ABC123")).thenReturn(Optional.of(room));
+        when(roomRepository.findByRoomCodeForUpdate("ABC123")).thenReturn(Optional.of(room));
         when(playerRepository.countByRoom(room)).thenReturn(1L);
         when(playerRepository.save(any(Player.class))).thenAnswer(invocation -> {
             Player player = invocation.getArgument(0);
@@ -58,7 +58,7 @@ class RoomServiceJoinTest {
 
     @Test
     void missingRoomDoesNotInsertPlayer() {
-        when(roomRepository.findByRoomCode("ZZZZZZ")).thenReturn(Optional.empty());
+        when(roomRepository.findByRoomCodeForUpdate("ZZZZZZ")).thenReturn(Optional.empty());
         assertThrows(InvalidRoomCodeException.class, () -> service.joinRoom("ZZZZZZ", "둘째"));
         verifyNoInteractions(playerRepository);
     }
@@ -70,8 +70,21 @@ class RoomServiceJoinTest {
     }
 
     @Test
+    void locksRoomBeforeCountingCapacity() {
+        when(roomRepository.findByRoomCodeForUpdate("ABC123")).thenReturn(Optional.of(room));
+        when(playerRepository.countByRoom(room)).thenReturn(3L);
+
+        assertThrows(RoomFullException.class, () -> service.joinRoom("ABC123", "넷째"));
+
+        var inOrder = inOrder(roomRepository, playerRepository);
+        inOrder.verify(roomRepository).findByRoomCodeForUpdate("ABC123");
+        inOrder.verify(playerRepository).countByRoom(room);
+        verify(playerRepository, never()).save(any(Player.class));
+    }
+
+    @Test
     void rejectsFullRoom() {
-        when(roomRepository.findByRoomCode("ABC123")).thenReturn(Optional.of(room));
+        when(roomRepository.findByRoomCodeForUpdate("ABC123")).thenReturn(Optional.of(room));
         when(playerRepository.countByRoom(room)).thenReturn(3L);
         assertThrows(RoomFullException.class, () -> service.joinRoom("ABC123", "넷째"));
         verify(playerRepository, never()).save(any(Player.class));
@@ -80,7 +93,7 @@ class RoomServiceJoinTest {
     @Test
     void rejectsStartedRoomEvenIfItHasSpace() {
         room.setStatus(RoomStatus.IN_PROGRESS);
-        when(roomRepository.findByRoomCode("ABC123")).thenReturn(Optional.of(room));
+        when(roomRepository.findByRoomCodeForUpdate("ABC123")).thenReturn(Optional.of(room));
         assertThrows(AlreadyStartedException.class, () -> service.joinRoom("ABC123", "둘째"));
         verifyNoInteractions(playerRepository);
     }
@@ -88,7 +101,7 @@ class RoomServiceJoinTest {
     @Test
     void rejectsFinishedRoom() {
         room.setStatus(RoomStatus.FINISHED);
-        when(roomRepository.findByRoomCode("ABC123")).thenReturn(Optional.of(room));
+        when(roomRepository.findByRoomCodeForUpdate("ABC123")).thenReturn(Optional.of(room));
         assertThrows(AlreadyStartedException.class, () -> service.joinRoom("ABC123", "둘째"));
         verifyNoInteractions(playerRepository);
     }

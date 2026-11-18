@@ -34,7 +34,7 @@ class RoomServiceNicknameTest {
 
     @Test
     void joinPersistsNormalizedNickname() {
-        when(roomRepository.findByRoomCode("ABC123")).thenReturn(Optional.of(room));
+        when(roomRepository.findByRoomCodeForUpdate("ABC123")).thenReturn(Optional.of(room));
         when(playerRepository.countByRoom(room)).thenReturn(0L);
         when(playerRepository.save(any(Player.class))).thenAnswer(invocation -> {
             Player player = invocation.getArgument(0);

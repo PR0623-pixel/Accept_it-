@@ -77,7 +77,8 @@ public class RoomService {
         return new RoomEnterResponse(roomCode, host.getId().toString());
     }
 
-    // R04: frontend-compatible room join. Concurrent capacity safety is R05.
+    // R05: serialize joins to the same room using a database row lock.
+    // The lock stays held until this transaction commits, including player insert.
     @Transactional
     public RoomEnterResponse joinRoom(String roomCode, String playerName) {
         // Reuse R01 nickname rules, and accept lowercase room codes from manual input.
@@ -87,7 +88,7 @@ public class RoomService {
             throw new InvalidRoomCodeException("방을 찾을 수 없습니다.");
         }
 
-        Room room = roomRepository.findByRoomCode(normalizedCode)
+        Room room = roomRepository.findByRoomCodeForUpdate(normalizedCode)
                 .orElseThrow(() -> new InvalidRoomCodeException("방을 찾을 수 없습니다."));
 
         if (room.getStatus() != RoomStatus.WAITING) {
