@@ -2,6 +2,7 @@
 package com.debate.game.controller;
 
 import com.debate.game.dto.RoleSelectRequest;
+import com.debate.game.dto.StartCheckRequest;
 import com.debate.game.dto.RoomSettingsUpdateRequest;
 import com.debate.game.dto.ReadyToggleRequest;
 import com.debate.game.dto.JoinRoomRequest;
@@ -113,6 +114,26 @@ public class RoomController {
     public ResponseEntity<Void> updateSettings(@PathVariable String roomCode,
             @RequestBody RoomSettingsUpdateRequest request) {
         roomService.updateSettings(roomCode, request.playerIdAsLong(), request);
+        return ResponseEntity.noContent().build();
+    }
+
+    // R16: inspection-only endpoint. Successful validation does NOT start the game.
+    // The actual start transaction and VOTING transition are implemented in G03+.
+    @Operation(summary = "게임 시작 조건 확인 (R16 임시 REST)",
+            description = "Host 요청, 대기 로비, 참가자 정확히 3명, 사회자 1명/객원 2명, 전원 Ready를 확인합니다. " +
+                    "204는 조건 충족을 뜻할 뿐 게임을 시작하거나 카드를 배분하지 않습니다. " +
+                    "요청 playerId는 인증된 신원이 아니며 실제 시작 시에는 신원 확인이 필요합니다.")
+    @ApiResponses({
+        @ApiResponse(responseCode = "204", description = "게임 시작 조건 충족 (실제 시작은 수행하지 않음)"),
+        @ApiResponse(responseCode = "403", description = "NOT_HOST"),
+        @ApiResponse(responseCode = "404", description = "ROOM_NOT_FOUND 또는 PLAYER_NOT_IN_ROOM"),
+        @ApiResponse(responseCode = "409", description = "ALREADY_STARTED, NOT_ENOUGH_PLAYERS, INVALID_PLAYER_COUNT, " +
+                "INVALID_ROLE_COMPOSITION, NOT_ALL_READY")
+    })
+    @PostMapping("/{roomCode}/start/check")
+    public ResponseEntity<Void> checkStart(@PathVariable String roomCode,
+            @RequestBody StartCheckRequest request) {
+        roomService.validateStartConditions(roomCode, request.playerIdAsLong());
         return ResponseEntity.noContent().build();
     }
 

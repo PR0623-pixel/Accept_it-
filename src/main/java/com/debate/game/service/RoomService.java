@@ -1,6 +1,8 @@
 package com.debate.game.service;
 
 import com.debate.game.exception.InvalidRoomCodeException;
+import com.debate.game.exception.InvalidStartConditionsException;
+import com.debate.game.exception.NotEnoughPlayersException;
 import com.debate.game.exception.RoomFullException;
 import com.debate.game.exception.RoleFullException;
 import com.debate.game.exception.RoleRequiredException;
@@ -245,6 +247,56 @@ public class RoomService {
         for (Player member : playerRepository.findByRoomForUpdate(room)) {
             member.setReady(false);
         }
+    }
+
+    // R16: validate a Host-initiated start request WITHOUT starting the game.
+    // G03 must call this inside its own start transaction (same room lock) before
+    // creating the session, so conditions cannot change between check and start.
+    @Transactional
+    public void validateStartConditions(String roomCode, Long playerId) {
+        String normalizedCode = roomCode == null ? "" : roomCode.strip().toUpperCase(Locale.ROOT);
+        if (!normalizedCode.matches("[A-Z0-9]{6}")) {
+            throw new InvalidRoomCodeException("방을 찾을 수 없습니다.");
+        }
+        if (playerId == null || playerId <= 0) {
+            throw new PlayerNotInRoomException();
+        }
+
+        // Same order as R05/R10/R11/R15: lock Room, then locking-read members.
+        Room room = roomRepository.findByRoomCodeForUpdate(normalizedCode)
+                .orElseThrow(() -> new InvalidRoomCodeException("방을 찾을 수 없습니다."));
+        if (room.getStatus() != RoomStatus.WAITING) {
+            throw new AlreadyStartedException();
+        }
+        List<Player> members = playerRepository.findByRoomForUpdate(room);
+        boolean callerIsMember = members.stream()
+                .anyMatch(p -> Objects.equals(p.getId(), playerId));
+        if (!callerIsMember) {
+            throw new PlayerNotInRoomException();
+        }
+        if (room.getHostPlayer() == null ||
+                !Objects.equals(room.getHostPlayer().getId(), playerId)) {
+            throw new NotHostException("방장만 게임 시작을 요청할 수 있습니다.");
+        }
+
+        if (members.size() < 3) {
+            throw new NotEnoughPlayersException();
+        }
+        if (members.size() != 3) {
+            throw new InvalidStartConditionsException(
+                    "INVALID_PLAYER_COUNT", "시작하려면 참가자가 정확히 3명이어야 합니다.");
+        }
+        long moderators = members.stream().filter(p -> p.getRole() == LobbyRole.MODERATOR).count();
+        long guests = members.stream().filter(p -> p.getRole() == LobbyRole.GUEST).count();
+        if (moderators != 1 || guests != 2) {
+            throw new InvalidStartConditionsException(
+                    "INVALID_ROLE_COMPOSITION", "사회자 1명과 객원 2명이 역할을 선택해야 합니다.");
+        }
+        if (members.stream().anyMatch(p -> !p.isReady())) {
+            throw new InvalidStartConditionsException(
+                    "NOT_ALL_READY", "모든 참가자가 Ready 상태여야 합니다.");
+        }
+        // No Room.status update, session creation, or card distribution in R16.
     }
 
     // R09/R10: lobby assignment (NONE/GUEST/MODERATOR) with 1 moderator / 2 guests.

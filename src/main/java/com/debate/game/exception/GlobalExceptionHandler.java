@@ -48,6 +48,16 @@ public class GlobalExceptionHandler extends ResponseEntityExceptionHandler {
         return error(HttpStatus.CONFLICT, "ROLE_REQUIRED", e.getMessage());
     }
 
+    @ExceptionHandler(InvalidStartConditionsException.class)
+    public ResponseEntity<Object> handleInvalidStartConditions(InvalidStartConditionsException e) {
+        return error(HttpStatus.CONFLICT, e.getCode(), e.getMessage());
+    }
+
+    @ExceptionHandler(GameStartPendingException.class)
+    public ResponseEntity<Object> handleGameStartPending(GameStartPendingException e) {
+        return error(HttpStatus.CONFLICT, "GAME_START_NOT_IMPLEMENTED", e.getMessage());
+    }
+
     @ExceptionHandler(NotEnoughPlayersException.class)
     public ResponseEntity<Object> handleNotEnoughPlayers(NotEnoughPlayersException e) {
         return error(HttpStatus.CONFLICT, "NOT_ENOUGH_PLAYERS", e.getMessage());
