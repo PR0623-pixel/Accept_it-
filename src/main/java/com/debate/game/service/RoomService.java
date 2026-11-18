@@ -108,6 +108,35 @@ public class RoomService {
         return new RoomEnterResponse(room.getRoomCode(), player.getId().toString());
     }
 
+    // R07: remove a non-host player while holding the same room lock used by R05 joins.
+    // Host departure policy is deliberately deferred to R08.
+    @Transactional
+    public void leaveRoom(String roomCode, Long playerId) {
+        String normalizedCode = roomCode == null ? "" : roomCode.strip().toUpperCase(Locale.ROOT);
+        if (!normalizedCode.matches("[A-Z0-9]{6}")) {
+            throw new InvalidRoomCodeException("방을 찾을 수 없습니다.");
+        }
+        if (playerId == null || playerId <= 0) {
+            throw new com.debate.game.exception.PlayerNotInRoomException();
+        }
+        Room room = roomRepository.findByRoomCodeForUpdate(normalizedCode)
+                .orElseThrow(() -> new InvalidRoomCodeException("방을 찾을 수 없습니다."));
+        if (room.getStatus() != RoomStatus.WAITING) {
+            throw new AlreadyStartedException();
+        }
+        Player player = playerRepository.findById(playerId)
+                .orElseThrow(com.debate.game.exception.PlayerNotInRoomException::new);
+        if (player.getRoom() == null || !java.util.Objects.equals(player.getRoom().getId(), room.getId())) {
+            throw new com.debate.game.exception.PlayerNotInRoomException();
+        }
+        if (room.getHostPlayer() != null &&
+                java.util.Objects.equals(room.getHostPlayer().getId(), player.getId())) {
+            throw new com.debate.game.exception.HostLeavePendingException();
+        }
+        // Deleting the membership row removes this player from countByRoom and Ready queries.
+        playerRepository.delete(player);
+    }
+
     // R06: read-only lobby snapshot. Reused later by the WebSocket ROOM_STATE mapper.
     @Transactional(readOnly = true)
     public com.debate.game.dto.LobbySnapshotResponse getLobby(String roomCode) {

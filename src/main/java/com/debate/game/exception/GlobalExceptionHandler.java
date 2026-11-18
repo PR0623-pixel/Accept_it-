@@ -28,6 +28,16 @@ public class GlobalExceptionHandler extends ResponseEntityExceptionHandler {
         return error(HttpStatus.SERVICE_UNAVAILABLE, "ROOM_CODE_GENERATION_FAILED", e.getMessage());
     }
 
+    @ExceptionHandler(PlayerNotInRoomException.class)
+    public ResponseEntity<Object> handlePlayerNotInRoom(PlayerNotInRoomException e) {
+        return error(HttpStatus.NOT_FOUND, "PLAYER_NOT_IN_ROOM", "해당 방의 참가자를 찾을 수 없습니다.");
+    }
+
+    @ExceptionHandler(HostLeavePendingException.class)
+    public ResponseEntity<Object> handleHostLeavePending(HostLeavePendingException e) {
+        return error(HttpStatus.CONFLICT, "HOST_LEAVE_PENDING", "방장 퇴장 정책은 아직 지원되지 않습니다.");
+    }
+
     @ExceptionHandler(RoomFullException.class)
     public ResponseEntity<Object> handleRoomFull(RoomFullException e) {
         return error(HttpStatus.CONFLICT, "ROOM_FULL", "방이 가득 찼습니다.");
