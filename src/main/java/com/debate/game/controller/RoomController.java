@@ -2,6 +2,7 @@
 package com.debate.game.controller;
 
 import com.debate.game.dto.RoleSelectRequest;
+import com.debate.game.dto.JoinRoomRequest;
 import com.debate.game.dto.RoomCreateRequest;
 import com.debate.game.service.RoomService;
 import lombok.RequiredArgsConstructor;
@@ -36,16 +37,22 @@ public class RoomController {
     }
 
     // 2. 방 Code 입력 후 Join 클릭 시[cite: 1]
-    @Operation(summary = "방 입장", description = "방 코드와 이름으로 방에 입장하고 생성된 플레이어 ID를 반환합니다.")
+    @Operation(summary = "방 입장", description = "JSON 요청 {nickname}으로 방에 입장합니다. "+
+            "이전 클라이언트의 playerName 쿼리 파라미터도 임시로 지원합니다. "+
+            "입장 응답은 기존 Long playerId이며, 프론트 계약에 맞춘 응답 변경은 R04/X01에서 처리합니다.")
     @ApiResponses({
-        @ApiResponse(responseCode = "400", description = "존재하지 않는 방 코드 또는 잘못된 요청",
+        @ApiResponse(responseCode = "400", description = "유효하지 않은 닉네임(INVALID_NICKNAME), 잘못된 방 코드 또는 요청",
                 content = @Content(schema = @Schema(implementation = ErrorResponse.class))),
         @ApiResponse(responseCode = "409", description = "방 정원 3명 초과",
                 content = @Content(schema = @Schema(implementation = ErrorResponse.class)))
     })
     @PostMapping("/{roomCode}/join")
-    public ResponseEntity<Long> joinRoom(@PathVariable String roomCode, @RequestParam String playerName) {
-        Long playerId = roomService.joinRoom(roomCode, playerName);
+    public ResponseEntity<Long> joinRoom(@PathVariable String roomCode,
+                                         @RequestBody(required = false) JoinRoomRequest request,
+                                         @RequestParam(name = "playerName", required = false) String legacyPlayerName) {
+        // JSON 요청이 있으면 해당 값을 사용하고, 없을 때만 기존 쿼리 파라미터를 사용한다.
+        String nickname = request != null ? request.getNickname() : legacyPlayerName;
+        Long playerId = roomService.joinRoom(roomCode, nickname);
         return ResponseEntity.ok(playerId); // 부여받은 고유 Player ID 반환
     }
 

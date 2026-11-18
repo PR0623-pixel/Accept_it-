@@ -13,6 +13,11 @@ import org.springframework.web.servlet.mvc.method.annotation.ResponseEntityExcep
 @RestControllerAdvice
 public class GlobalExceptionHandler extends ResponseEntityExceptionHandler {
 
+    @ExceptionHandler(InvalidNicknameException.class)
+    public ResponseEntity<Object> handleInvalidNickname(InvalidNicknameException e) {
+        return error(HttpStatus.BAD_REQUEST, "INVALID_NICKNAME", e.getMessage());
+    }
+
     @ExceptionHandler(InvalidRoomCodeException.class)
     public ResponseEntity<Object> handleInvalidRoomCode(InvalidRoomCodeException e) {
         return error(HttpStatus.BAD_REQUEST, "INVALID_ROOM_CODE", "존재하지 않는 방 코드입니다.");
