@@ -6,7 +6,6 @@ import com.debate.game.entity.enums.LobbyRole;
 import com.debate.game.entity.enums.RoomStatus;
 import com.debate.game.exception.AlreadyStartedException;
 import com.debate.game.exception.InvalidRoomCodeException;
-import com.debate.game.exception.NotEnoughPlayersException;
 import com.debate.game.exception.PlayerNotInRoomException;
 import com.debate.game.exception.RoleRequiredException;
 import com.debate.game.repository.PlayerRepository;
@@ -91,10 +90,21 @@ class RoomServiceReadyTest {
     }
 
     @Test
-    void readyTrueRequiresThreePlayers() {
+    void onePlayerCanReadyAfterChoosingRole() {
+        roster(actor);
+        service.setReady("AB12CD", 12L, true);
+        assertTrue(actor.isReady());
+        assertEquals(RoomStatus.WAITING, room.getStatus());
+    }
+
+    @Test
+    void twoPlayersCanReadyIndependently() {
         roster(actor, guest);
-        assertThrows(NotEnoughPlayersException.class, () -> service.setReady("AB12CD", 12L, true));
-        assertFalse(actor.isReady());
+        service.setReady("AB12CD", 12L, true);
+        service.setReady("AB12CD", 13L, true);
+        assertTrue(actor.isReady());
+        assertTrue(guest.isReady());
+        assertEquals(RoomStatus.WAITING, room.getStatus());
     }
 
     @Test

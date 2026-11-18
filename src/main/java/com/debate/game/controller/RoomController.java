@@ -94,7 +94,7 @@ public class RoomController {
     }
 
     // R09/R10: temporary REST inspection route; SET_ROLE will use WebSocket.
-    @Operation(summary = "로비 역할 선택 (임시 REST)", description = "NONE, GUEST, MODERATOR 중 로비 역할을 선택합니다. PRO/CON은 물품별 투표에서만 선택하며, 이 요청은 Ready를 false로 초기화합니다. 사회자 1명, 객원 2명까지 선택할 수 있으며 정원이 차면 ROLE_FULL을 반환합니다. 별도 Ready 요청은 POST /{roomCode}/ready입니다.")
+    @Operation(summary = "로비 역할 선택 (임시 REST)", description = "NONE, GUEST, MODERATOR 중 로비 역할을 선택합니다. PRO/CON은 물품별 투표에서만 선택하며, 성공한 역할 선택(동일 역할 재선택 포함)은 Ready를 false로 초기화합니다. 사회자 1명, 객원 2명까지 선택할 수 있으며 정원이 차면 ROLE_FULL을 반환합니다. 별도 Ready 요청은 POST /{roomCode}/ready입니다.")
     @ApiResponses({
         @ApiResponse(responseCode = "400", description = "존재하지 않는 플레이어 또는 잘못된 역할",
                 content = @Content(schema = @Schema(implementation = ErrorResponse.class))),
@@ -110,13 +110,13 @@ public class RoomController {
     // The frontend contract uses WebSocket SET_READY {ready}; do not add this REST
     // route to frontend/src/api/rest.ts as the production transport.
     @Operation(summary = "Ready 설정/취소 (임시 REST)",
-            description = "대기 로비에서 플레이어의 준비 상태를 변경합니다. ready=true는 역할 선택과 3명 입장이 필요하며, ready=false는 언제든 준비를 취소합니다. 게임 시작 전환은 R16 이후 구현됩니다.")
+            description = "대기 로비에서 플레이어의 준비 상태를 변경합니다. ready=true는 역할 선택이 필요하며, 1~2명이 있어도 가능합니다. ready=false는 준비를 취소합니다. 게임 시작에 필요한 3명·역할 구성·전원 Ready 검증은 R16에서 처리합니다.")
     @ApiResponses({
         @ApiResponse(responseCode = "204", description = "Ready 변경 완료"),
         @ApiResponse(responseCode = "400", description = "ready 누락 등 잘못된 요청"),
         @ApiResponse(responseCode = "404", description = "ROOM_NOT_FOUND 또는 PLAYER_NOT_IN_ROOM",
                 content = @Content(schema = @Schema(implementation = ErrorResponse.class))),
-        @ApiResponse(responseCode = "409", description = "ROLE_REQUIRED, NOT_ENOUGH_PLAYERS 또는 ALREADY_STARTED",
+        @ApiResponse(responseCode = "409", description = "ROLE_REQUIRED 또는 ALREADY_STARTED",
                 content = @Content(schema = @Schema(implementation = ErrorResponse.class)))
     })
     @PostMapping("/{roomCode}/ready")

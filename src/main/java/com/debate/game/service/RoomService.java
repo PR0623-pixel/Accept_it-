@@ -4,7 +4,6 @@ import com.debate.game.exception.InvalidRoomCodeException;
 import com.debate.game.exception.RoomFullException;
 import com.debate.game.exception.RoleFullException;
 import com.debate.game.exception.RoleRequiredException;
-import com.debate.game.exception.NotEnoughPlayersException;
 import com.debate.game.exception.AlreadyStartedException;
 import com.debate.game.exception.PlayerNotInRoomException;
 import com.debate.game.exception.RoomCodeGenerationException;
@@ -190,7 +189,9 @@ public class RoomService {
 
     // R09/R10: lobby assignment (NONE/GUEST/MODERATOR) with 1 moderator / 2 guests.
     // Temporarily exposed as REST /api/rooms/ready until WebSocket SET_ROLE is implemented.
-    // R11: role selection continues to clear Ready; setReady below changes it independently.
+    // R12: a successful SET_ROLE (even reselecting the same role) clears Ready,
+    // while a ROLE_FULL rejection leaves the original role/Ready/stance intact.
+    // setReady below is independent of role selection.
     @Transactional
     public void selectRole(Long playerId, String role) {
         if (playerId == null || playerId <= 0) {
@@ -272,7 +273,8 @@ public class RoomService {
                 .orElseThrow(PlayerNotInRoomException::new);
 
         if (ready) {
-            // Match frontend SET_READY validation order and error codes.
+            // R11 policy update (confirmed): Ready represents individual willingness.
+            // One or two players may Ready; requiring 3 belongs to R16 Start validation.
             if (player.getRole() == null || player.getRole() == LobbyRole.NONE) {
                 throw new RoleRequiredException();
             }

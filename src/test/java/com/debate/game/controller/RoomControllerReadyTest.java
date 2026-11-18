@@ -2,7 +2,6 @@ package com.debate.game.controller;
 
 import com.debate.game.exception.AlreadyStartedException;
 import com.debate.game.exception.GlobalExceptionHandler;
-import com.debate.game.exception.NotEnoughPlayersException;
 import com.debate.game.exception.PlayerNotInRoomException;
 import com.debate.game.exception.RoleRequiredException;
 import com.debate.game.service.RoomService;
@@ -69,14 +68,6 @@ class RoomControllerReadyTest {
         mvc.perform(request("{\"playerId\":\"12\",\"ready\":true}"))
                 .andExpect(status().isConflict())
                 .andExpect(jsonPath("$.code").value("ROLE_REQUIRED"));
-    }
-
-    @Test
-    void notEnoughPlayersMatchesFrontendErrorContract() throws Exception {
-        doThrow(new NotEnoughPlayersException()).when(roomService).setReady("AB12CD", 12L, true);
-        mvc.perform(request("{\"playerId\":\"12\",\"ready\":true}"))
-                .andExpect(status().isConflict())
-                .andExpect(jsonPath("$.code").value("NOT_ENOUGH_PLAYERS"));
     }
 
     @Test
