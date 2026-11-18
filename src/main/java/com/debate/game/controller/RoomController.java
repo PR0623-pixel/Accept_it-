@@ -94,17 +94,24 @@ public class RoomController {
     }
 
     // R09/R10: temporary REST inspection route; SET_ROLE will use WebSocket.
-    @Operation(summary = "로비 역할 선택 (임시 REST)", description = "NONE, GUEST, MODERATOR 중 로비 역할을 선택합니다. PRO/CON은 물품별 투표에서만 선택하며, 성공한 역할 선택(동일 역할 재선택 포함)은 Ready를 false로 초기화합니다. 사회자 1명, 객원 2명까지 선택할 수 있으며 정원이 차면 ROLE_FULL을 반환합니다. 별도 Ready 요청은 POST /{roomCode}/ready입니다.")
+    @Operation(summary = "로비 역할 선택 (임시 REST)", description = "NONE, GUEST, MODERATOR 중 로비 역할을 선택합니다. 성공한 역할 선택(동일 역할 재선택 포함)은 Ready를 false로 초기화합니다. 사회자 1명, 객원 2명까지 선택할 수 있으며 정원이 차면 ROLE_FULL을 반환합니다. ")
     @ApiResponses({
         @ApiResponse(responseCode = "400", description = "존재하지 않는 플레이어 또는 잘못된 역할",
                 content = @Content(schema = @Schema(implementation = ErrorResponse.class))),
         @ApiResponse(responseCode = "409", description = "ROLE_FULL: 역할 정원 초과 또는 진행 중인 방",
                 content = @Content(schema = @Schema(implementation = ErrorResponse.class)))
     })
-    @PostMapping("/ready")
-    public ResponseEntity<Void> selectRole(@RequestBody RoleSelectRequest request) {
-        roomService.selectRole(request.getPlayerId(), request.getRole());
-        return ResponseEntity.ok().build();
+    @PostMapping("/{roomCode}/role")
+    public ResponseEntity<Void> selectRole(
+            @PathVariable String roomCode,
+            @RequestBody RoleSelectRequest request) {
+
+        roomService.selectRole(
+                request.getPlayerId(),
+                request.getRole()
+        );
+
+        return ResponseEntity.noContent().build();
     }
     // R11: temporary REST endpoint to inspect/test the independent Ready toggle.
     // The frontend contract uses WebSocket SET_READY {ready}; do not add this REST

@@ -1,3 +1,4 @@
+
 package com.debate.game.controller;
 
 import com.debate.game.exception.GlobalExceptionHandler;
@@ -20,35 +21,49 @@ class RoomControllerRoleTest {
     @BeforeEach
     void setup() {
         roomService = mock(RoomService.class);
-        mvc = MockMvcBuilders.standaloneSetup(new RoomController(roomService))
-                .setControllerAdvice(new GlobalExceptionHandler()).build();
+        mvc = MockMvcBuilders.standaloneSetup(
+                        new RoomController(roomService))
+                .setControllerAdvice(new GlobalExceptionHandler())
+                .build();
     }
 
     @Test
-    void guestRoleCanBeSelectedThroughLegacyInspectionRoute() throws Exception {
-        mvc.perform(post("/api/rooms/ready")
+    void guestRoleCanBeSelected() throws Exception {
+        mvc.perform(post("/api/rooms/ABC123/role")
                         .contentType(MediaType.APPLICATION_JSON)
                         .content("{\"playerId\":12,\"role\":\"GUEST\"}"))
-                .andExpect(status().isOk());
+                .andExpect(status().isNoContent());
+
         verify(roomService).selectRole(12L, "GUEST");
     }
 
     @Test
-    void roleCapacityConflictUsesFrontendErrorContract() throws Exception {
-        doThrow(new RoleFullException()).when(roomService).selectRole(12L, "MODERATOR");
-        mvc.perform(post("/api/rooms/ready")
+    void roleCapacityConflictUsesFrontendErrorContract()
+            throws Exception {
+
+        doThrow(new RoleFullException())
+                .when(roomService)
+                .selectRole(12L, "MODERATOR");
+
+        mvc.perform(post("/api/rooms/ABC123/role")
                         .contentType(MediaType.APPLICATION_JSON)
                         .content("{\"playerId\":12,\"role\":\"MODERATOR\"}"))
                 .andExpect(status().isConflict())
                 .andExpect(jsonPath("$.code").value("ROLE_FULL"))
-                .andExpect(jsonPath("$.message").value("해당 역할 자리가 가득 찼습니다."));
+                .andExpect(jsonPath("$.message")
+                        .value("해당 역할 자리가 가득 찼습니다."));
     }
 
     @Test
-    void oldFixedProConRoleCannotBeSelected() throws Exception {
-        doThrow(new IllegalArgumentException("PRO is not a lobby role"))
-                .when(roomService).selectRole(12L, "PRO");
-        mvc.perform(post("/api/rooms/ready")
+    void oldFixedProConRoleCannotBeSelected()
+            throws Exception {
+
+        doThrow(new IllegalArgumentException(
+                "PRO is not a lobby role"))
+                .when(roomService)
+                .selectRole(12L, "PRO");
+
+        mvc.perform(post("/api/rooms/ABC123/role")
                         .contentType(MediaType.APPLICATION_JSON)
                         .content("{\"playerId\":12,\"role\":\"PRO\"}"))
                 .andExpect(status().isBadRequest())
