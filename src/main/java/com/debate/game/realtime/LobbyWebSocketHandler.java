@@ -1,11 +1,14 @@
 package com.debate.game.realtime;
 
+import com.debate.game.Ingame.RoomGameState;
+import com.debate.game.Ingame.RoomGameStateStore;
 import com.debate.game.dto.LobbySnapshotResponse;
+import com.debate.game.entity.enums.Stance;
 import com.debate.game.exception.*;
 import com.debate.game.service.RoomService;
+import com.debate.game.websocket.GameActionException;
 import com.fasterxml.jackson.databind.JsonNode;
 import com.fasterxml.jackson.databind.ObjectMapper;
-import org.springframework.context.annotation.Bean;
 import lombok.RequiredArgsConstructor;
 import org.springframework.stereotype.Component;
 import org.springframework.web.socket.CloseStatus;
@@ -23,13 +26,15 @@ import java.util.Objects;
 import java.util.concurrent.ConcurrentHashMap;
 import java.util.concurrent.ConcurrentMap;
 
-/** Minimal room-scoped JSON transport for R17 lobby events; no STOMP. */
+/** Minimal room-scoped JSON transport for lobby and in-game events; no STOMP. */
 @Component
 @RequiredArgsConstructor
 public class LobbyWebSocketHandler extends TextWebSocketHandler {
     private final RoomService roomService;
     private final LobbyStateReader stateReader;
     private final LobbyRoomStateMapper stateMapper;
+    private final IngameRoomStateMapper ingameStateMapper;
+    private final RoomGameStateStore gameStateStore;
     private final ObjectMapper mapper;
     private final ConcurrentMap<String, ParticipantSocket> connections = new ConcurrentHashMap<>();
 
@@ -41,7 +46,8 @@ public class LobbyWebSocketHandler extends TextWebSocketHandler {
         URI uri = socket.getUri();
         String path = uri == null ? "" : uri.getPath();
         String prefix = "/ws/rooms/";
-        String code = path.startsWith(prefix) ? path.substring(prefix.length()).strip().toUpperCase(Locale.ROOT) : "";
+        String code = path.startsWith(prefix)
+                ? path.substring(prefix.length()).strip().toUpperCase(Locale.ROOT) : "";
         if (!code.matches("[A-Z0-9]{6}")) {
             failAndClose(socket, "ROOM_NOT_FOUND", "방을 찾을 수 없습니다.");
             return;
@@ -56,6 +62,7 @@ public class LobbyWebSocketHandler extends TextWebSocketHandler {
             failAndClose(socket, "PLAYER_NOT_IN_ROOM", "방의 참가자만 연결할 수 있습니다.");
             return;
         }
+
         LobbySnapshotResponse lobby;
         try {
             lobby = stateReader.read(code);
@@ -67,11 +74,18 @@ public class LobbyWebSocketHandler extends TextWebSocketHandler {
             failAndClose(socket, "PLAYER_NOT_IN_ROOM", "방의 참가자만 연결할 수 있습니다.");
             return;
         }
+
         connections.put(socket.getId(), new ParticipantSocket(code, playerId, socket));
-        // The frontend expects this order on every connection/reconnection.
-        send(socket, "ROOM_STATE", stateMapper.map(lobby));
-        send(socket, "HAND", List.of()); // Real cards introduced in C-stage.
-        send(socket, "CHAT_HISTORY", List.of()); // Chat history introduced in D-stage.
+        RoomGameState gameState = gameStateStore.find(code).orElse(null);
+        if (gameState == null) {
+            send(socket, "ROOM_STATE", stateMapper.map(lobby));
+            send(socket, "HAND", List.of());
+            send(socket, "CHAT_HISTORY", List.of());
+        } else {
+            send(socket, "ROOM_STATE", ingameStateMapper.map(gameState, playerId));
+            send(socket, "HAND", gameState.handFor(playerId));
+            send(socket, "CHAT_HISTORY", gameState.chatHistorySnapshot());
+        }
     }
 
     @Override
@@ -83,8 +97,8 @@ public class LobbyWebSocketHandler extends TextWebSocketHandler {
         }
         try {
             JsonNode root = mapper.readTree(message.getPayload());
-            if (!root.isObject() || !root.hasNonNull("type") ||
-                    !root.has("payload") || !root.path("payload").isObject()) {
+            if (!root.isObject() || !root.hasNonNull("type")
+                    || !root.has("payload") || !root.path("payload").isObject()) {
                 throw new IllegalArgumentException("메시지 형식이 올바르지 않습니다.");
             }
             JsonNode payload = root.get("payload");
@@ -95,48 +109,64 @@ public class LobbyWebSocketHandler extends TextWebSocketHandler {
                 case "UPDATE_SETTINGS" -> roomService.updateSocketSettings(source.roomCode(), source.playerId(),
                         requiredInteger(payload, "maxItems"), requiredInteger(payload, "itemSeconds"),
                         requiredInteger(payload, "cardsPerItem"));
-                case "START_GAME" ->
-                        roomService.startGame(source.roomCode(), source.playerId());
-                default -> throw new IllegalArgumentException("현재 지원하지 않는 로비 이벤트입니다.");
+                case "START_GAME" -> roomService.startGame(source.roomCode(), source.playerId());
+                case "VOTE" -> vote(source, requiredText(payload, "stance"));
+                default -> throw new IllegalArgumentException("현재 지원하지 않는 이벤트입니다.");
             }
-            // Success is broadcast by the AFTER_COMMIT listener, never here.
         } catch (Exception e) {
             sendError(socket, codeOf(e), userMessage(e));
         }
     }
 
+    private void vote(ParticipantSocket source, String rawStance) {
+        final Stance stance;
+        try {
+            stance = Stance.valueOf(rawStance.strip().toUpperCase(Locale.ROOT));
+        } catch (IllegalArgumentException e) {
+            throw new IllegalArgumentException("stance는 PRO 또는 CON이어야 합니다.");
+        }
+        RoomGameState state = gameStateStore.find(source.roomCode())
+                .orElseThrow(() -> new GameActionException("INVALID", "진행 중인 게임 상태를 찾을 수 없습니다."));
+        state.vote(source.playerId(), stance, System.currentTimeMillis());
+        broadcastRoomState(source.roomCode());
+    }
+
     private static String requiredText(JsonNode node, String name) {
         JsonNode value = node.get(name);
-        if (value == null || !value.isTextual()) throw new IllegalArgumentException(name + " 값이 필요합니다.");
+        if (value == null || !value.isTextual()) {
+            throw new IllegalArgumentException(name + " 값이 필요합니다.");
+        }
         return value.asText();
     }
 
     private static boolean requiredBoolean(JsonNode node, String name) {
         JsonNode value = node.get(name);
-        if (value == null || !value.isBoolean()) throw new IllegalArgumentException(name + "은 true/false여야 합니다.");
+        if (value == null || !value.isBoolean()) {
+            throw new IllegalArgumentException(name + "은 true/false여야 합니다.");
+        }
         return value.asBoolean();
     }
 
     private static Integer requiredInteger(JsonNode node, String name) {
         JsonNode value = node.get(name);
-        if (value == null || !value.isIntegralNumber() || !value.canConvertToInt())
+        if (value == null || !value.isIntegralNumber() || !value.canConvertToInt()) {
             throw new IllegalArgumentException(name + "은 정수여야 합니다.");
+        }
         return value.intValue();
     }
 
     private static String codeOf(Exception ex) {
-    if (ex instanceof NotHostException) return "NOT_HOST";
-    if (ex instanceof RoleFullException) return "ROLE_FULL";
-    if (ex instanceof RoleRequiredException) return "ROLE_REQUIRED";
-    if (ex instanceof NotEnoughPlayersException) return "NOT_ENOUGH_PLAYERS";
-    if (ex instanceof InvalidStartConditionsException startError) {
-        return startError.getCode();
+        if (ex instanceof GameActionException gameError) return gameError.getCode();
+        if (ex instanceof NotHostException) return "NOT_HOST";
+        if (ex instanceof RoleFullException) return "ROLE_FULL";
+        if (ex instanceof RoleRequiredException) return "ROLE_REQUIRED";
+        if (ex instanceof NotEnoughPlayersException) return "NOT_ENOUGH_PLAYERS";
+        if (ex instanceof InvalidStartConditionsException startError) return startError.getCode();
+        if (ex instanceof PlayerNotInRoomException) return "PLAYER_NOT_IN_ROOM";
+        if (ex instanceof InvalidRoomCodeException) return "ROOM_NOT_FOUND";
+        if (ex instanceof AlreadyStartedException) return "ALREADY_STARTED";
+        return "INVALID";
     }
-    if (ex instanceof PlayerNotInRoomException) return "PLAYER_NOT_IN_ROOM";
-    if (ex instanceof InvalidRoomCodeException) return "ROOM_NOT_FOUND";
-    if (ex instanceof AlreadyStartedException) return "ALREADY_STARTED";
-    return "INVALID";
-}
 
     private static String userMessage(Exception ex) {
         String message = ex.getMessage();
@@ -147,8 +177,18 @@ public class LobbyWebSocketHandler extends TextWebSocketHandler {
         return connections.values().stream().anyMatch(c -> c.roomCode().equals(roomCode));
     }
 
-    /** Sends snapshots solely to sessions in the indicated room. */
+    /** Sends recipient-specific room snapshots, masking other votes while voting. */
     public void broadcastRoomState(String roomCode) {
+        RoomGameState gameState = gameStateStore.find(roomCode).orElse(null);
+        if (gameState != null) {
+            for (ParticipantSocket connection : connections.values()) {
+                if (roomCode.equals(connection.roomCode())) {
+                    sendQuietly(connection.socket(), "ROOM_STATE",
+                            ingameStateMapper.map(gameState, connection.playerId()));
+                }
+            }
+            return;
+        }
         if (!hasRoomConnections(roomCode)) return;
         LobbySnapshotResponse snapshot;
         try {
@@ -158,30 +198,31 @@ public class LobbyWebSocketHandler extends TextWebSocketHandler {
             return;
         }
         Map<String, Object> state = stateMapper.map(snapshot);
-        for (ParticipantSocket c : connections.values()) {
-            if (roomCode.equals(c.roomCode())) sendQuietly(c.socket(), "ROOM_STATE", state);
-        }
-    }
-
-    /** A guest that explicitly left must stop receiving subsequent room updates. */
-    public void closePlayer(String roomCode, Long playerId) {
-        for (Map.Entry<String, ParticipantSocket> entry : connections.entrySet()) {
-            ParticipantSocket c = entry.getValue();
-            if (roomCode.equals(c.roomCode()) && Objects.equals(playerId, c.playerId()) &&
-                    connections.remove(entry.getKey(), c)) {
-                sendError(c.socket(), "PLAYER_NOT_IN_ROOM", "방에서 퇴장했습니다.");
-                closeQuietly(c.socket());
+        for (ParticipantSocket connection : connections.values()) {
+            if (roomCode.equals(connection.roomCode())) {
+                sendQuietly(connection.socket(), "ROOM_STATE", state);
             }
         }
     }
 
-    /** R08 Host exit closes the room and every remaining socket. */
-    public void closeRoom(String roomCode) {
+    public void closePlayer(String roomCode, Long playerId) {
         for (Map.Entry<String, ParticipantSocket> entry : connections.entrySet()) {
-            ParticipantSocket c = entry.getValue();
-            if (roomCode.equals(c.roomCode()) && connections.remove(entry.getKey(), c)) {
-                sendError(c.socket(), "ROOM_NOT_FOUND", "방이 종료되었습니다.");
-                closeQuietly(c.socket());
+            ParticipantSocket connection = entry.getValue();
+            if (roomCode.equals(connection.roomCode()) && Objects.equals(playerId, connection.playerId())
+                    && connections.remove(entry.getKey(), connection)) {
+                sendError(connection.socket(), "PLAYER_NOT_IN_ROOM", "방에서 퇴장했습니다.");
+                closeQuietly(connection.socket());
+            }
+        }
+    }
+
+    public void closeRoom(String roomCode) {
+        gameStateStore.remove(roomCode);
+        for (Map.Entry<String, ParticipantSocket> entry : connections.entrySet()) {
+            ParticipantSocket connection = entry.getValue();
+            if (roomCode.equals(connection.roomCode()) && connections.remove(entry.getKey(), connection)) {
+                sendError(connection.socket(), "ROOM_NOT_FOUND", "방이 종료되었습니다.");
+                closeQuietly(connection.socket());
             }
         }
     }
@@ -189,7 +230,6 @@ public class LobbyWebSocketHandler extends TextWebSocketHandler {
     @Override
     public void afterConnectionClosed(WebSocketSession socket, CloseStatus status) {
         connections.remove(socket.getId());
-        // Network disconnect is NOT a lobby leave (reconnect recovers player).
     }
 
     @Override
@@ -208,19 +248,26 @@ public class LobbyWebSocketHandler extends TextWebSocketHandler {
     }
 
     private void sendQuietly(WebSocketSession socket, String type, Object payload) {
-        try { send(socket, type, payload); }
-        catch (IOException e) { connections.remove(socket.getId()); closeQuietly(socket); }
+        try {
+            send(socket, type, payload);
+        } catch (IOException e) {
+            connections.remove(socket.getId());
+            closeQuietly(socket);
+        }
     }
 
     private void send(WebSocketSession socket, String type, Object payload) throws IOException {
-        // Spring raw WebSocket sessions cannot safely send concurrently.
         synchronized (socket) {
-            if (socket.isOpen()) socket.sendMessage(new TextMessage(mapper.writeValueAsString(new Envelope(type, payload))));
+            if (socket.isOpen()) {
+                socket.sendMessage(new TextMessage(mapper.writeValueAsString(new Envelope(type, payload))));
+            }
         }
     }
 
     private void closeQuietly(WebSocketSession socket) {
-        try { if (socket.isOpen()) socket.close(); }
-        catch (IOException ignored) { }
+        try {
+            if (socket.isOpen()) socket.close();
+        } catch (IOException ignored) {
+        }
     }
 }
