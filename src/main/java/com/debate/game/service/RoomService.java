@@ -18,12 +18,18 @@ import com.debate.game.entity.Player;
 import com.debate.game.entity.ProcurementItem;
 import com.debate.game.entity.enums.RoomStatus;
 import com.debate.game.entity.Room;
+import com.debate.game.entity.SituationCard;
+import com.debate.game.entity.enums.DebateRole;
 import com.debate.game.entity.enums.LobbyRole;
 import com.debate.game.repository.PlayerRepository;
 import com.debate.game.repository.ProcurementItemRepository;
 import com.debate.game.repository.RoomRepository;
 import com.debate.game.Ingame.GameStartedEvent;
 import com.debate.game.Ingame.RoomGameState;
+import com.debate.game.entity.SituationCard;
+import com.debate.game.entity.enums.DebateRole;
+import com.debate.game.repository.SituationCardRepository;
+
 import com.debate.game.dto.websocket.RoomStatePayload;
 import lombok.RequiredArgsConstructor;
 import org.springframework.beans.factory.annotation.Autowired;
@@ -54,6 +60,7 @@ public class RoomService {
     // have no transport side effects unless explicitly configured.
     private ApplicationEventPublisher lobbyEventPublisher;
     private ProcurementItemRepository procurementItemRepository;
+    private SituationCardRepository situationCardRepository;
 
     @Autowired
     public void setLobbyEventPublisher(ApplicationEventPublisher publisher) {
@@ -62,6 +69,10 @@ public class RoomService {
     @Autowired 
     public void setProcurementItemRepository(ProcurementItemRepository repository){
         this.procurementItemRepository = repository;
+    }
+    @Autowired
+    public void setSituationCardRepository(SituationCardRepository repository) {
+        this.situationCardRepository = repository;
     }
 
     private void lobbyChanged(String roomCode, Long leftPlayerId, boolean roomClosed) {
@@ -481,6 +492,8 @@ public class RoomService {
                 catalog.get(java.util.concurrent.ThreadLocalRandom.current()
                         .nextInt(catalog.size()));
 
+        createInitialSituationCards(room, firstItem);
+
         room.setCurrentProcurementItem(firstItem);
         room.setCurrentTopic(firstItem.getTopicCategory());
         room.setCurrentTurnRole(null);
@@ -587,6 +600,35 @@ public class RoomService {
                     "모든 참가자가 Ready 상태여야 합니다.");
         }
     }
+    private void createInitialSituationCards(Room room, ProcurementItem item) {
+        if (situationCardRepository == null) {
+            throw new IllegalStateException("상황 카드 저장소가 설정되지 않았습니다.");
+        }
+
+        int cardsPerSide = room.getMaxCardCount();
+
+        for (int i = 1; i <= cardsPerSide; i++) {
+            saveSituationCard(room, item, DebateRole.PRO, i);
+            saveSituationCard(room, item, DebateRole.CON, i);
+        }
+}
+
+private void saveSituationCard(
+        Room room,
+        ProcurementItem item,
+        DebateRole side,
+        int index
+) {
+    SituationCard card = new SituationCard();
+    card.setRoom(room);
+    card.setOwnerRole(side);
+    card.setKeyword(side.name() + " 키워드 " + index);
+    card.setContent(
+            item.getItemName() + "에 관한 " + side.name() +
+            " 측 상황 카드 " + index
+    );
+    situationCardRepository.save(card);
+}
 
     // R09/R10: lobby assignment (NONE/GUEST/MODERATOR) with 1 moderator / 2 guests.
     // Temporarily exposed as REST /api/rooms/{roomCode}/role until WebSocket SET_ROLE is implemented.
