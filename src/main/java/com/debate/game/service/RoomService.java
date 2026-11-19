@@ -22,6 +22,9 @@ import com.debate.game.entity.enums.LobbyRole;
 import com.debate.game.repository.PlayerRepository;
 import com.debate.game.repository.ProcurementItemRepository;
 import com.debate.game.repository.RoomRepository;
+import com.debate.game.Ingame.GameStartedEvent;
+import com.debate.game.Ingame.RoomGameState;
+import com.debate.game.dto.websocket.RoomStatePayload;
 import lombok.RequiredArgsConstructor;
 import org.springframework.beans.factory.annotation.Autowired;
 import org.springframework.context.ApplicationEventPublisher;
@@ -482,14 +485,43 @@ public class RoomService {
         room.setCurrentTopic(firstItem.getTopicCategory());
         room.setCurrentTurnRole(null);
 
-        for (Player player : playerRepository.findByRoomForUpdate(room)) {
+        List<Player> members = playerRepository.findByRoomForUpdate(room);
+        for (Player player : members) {
             player.setStance(null);
         }
 
         room.setStatus(RoomStatus.IN_PROGRESS);
 
-        // 기존 AFTER_COMMIT listener가 커밋 후 최신 ROOM_STATE를 보냅니다.
-        lobbyChanged(room.getRoomCode(), null, false);
+        List<RoomGameState.PlayerState> gamePlayers = members.stream()
+                .map(player -> new RoomGameState.PlayerState(
+                        player.getId(),
+                        player.getPlayerName(),
+                        player.getRole(),
+                        player.isReady(),
+                        room.getHostPlayer() != null
+                                && Objects.equals(room.getHostPlayer().getId(), player.getId())
+                ))
+                .toList();
+
+        RoomGameState gameState = new RoomGameState(
+            room.getRoomCode(),
+            new RoomStatePayload.ItemPayload(
+                    1,
+                    firstItem.getItemName(),
+                    firstItem.getDescription()
+                ),
+            new RoomStatePayload.RoomSettingsPayload(
+                    room.getMaxItems(),
+                    room.getTurnTimeLimit() * 60,
+                    room.getMaxCardCount()
+                ),
+            gamePlayers
+        );
+
+        // DB 트랜잭션이 커밋된 경우에만 AFTER_COMMIT listener가 Store에 넣습니다.
+        if (lobbyEventPublisher != null) {
+            lobbyEventPublisher.publishEvent(new GameStartedEvent(gameState));
+        }
     }
 
     private Room lockWaitingRoom(String roomCode) {
