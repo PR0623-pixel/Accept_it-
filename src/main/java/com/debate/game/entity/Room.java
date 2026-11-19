@@ -3,6 +3,7 @@ package com.debate.game.entity;
 import com.debate.game.entity.enums.RoomStatus;
 import com.debate.game.entity.enums.DebateRole;
 import jakarta.persistence.*;
+import com.debate.game.validation.RoomSettingsPolicy;
 import lombok.Getter;
 import lombok.Setter;
 
@@ -24,9 +25,15 @@ public class Room {
 
     private String currentTopic; // 현재 방의 토론 주제
 
-    private int maxCardCount; // 받는 카드 수 제한
+    private int maxCardCount = RoomSettingsPolicy.DEFAULT_CARDS_PER_ITEM; // 받는 카드 수 제한
 
-    private int turnTimeLimit; // 턴 시간 제한 (3~20분)
+    // Legacy column: minutes per procurement item. API uses itemSeconds (x60).
+    private int turnTimeLimit = RoomSettingsPolicy.DEFAULT_ITEM_SECONDS / RoomSettingsPolicy.ITEM_SECONDS_STEP;
+
+    // R13: five persisted game settings (the other two are maxCardCount/turnTimeLimit).
+    private int maxItems = RoomSettingsPolicy.DEFAULT_MAX_ITEMS;
+    private int speechSeconds = RoomSettingsPolicy.DEFAULT_SPEECH_SECONDS;
+    private int rebuttalSeconds = RoomSettingsPolicy.DEFAULT_REBUTTAL_SECONDS;
 
     @ManyToOne(fetch = FetchType.LAZY)
     @JoinColumn(name = "current_item_id")

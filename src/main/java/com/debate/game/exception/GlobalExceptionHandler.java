@@ -33,6 +33,36 @@ public class GlobalExceptionHandler extends ResponseEntityExceptionHandler {
         return error(HttpStatus.NOT_FOUND, "PLAYER_NOT_IN_ROOM", "해당 방의 참가자를 찾을 수 없습니다.");
     }
 
+    @ExceptionHandler(NotHostException.class)
+    public ResponseEntity<Object> handleNotHost(NotHostException e) {
+        return error(HttpStatus.FORBIDDEN, "NOT_HOST", e.getMessage());
+    }
+
+    @ExceptionHandler(RoleFullException.class)
+    public ResponseEntity<Object> handleRoleFull(RoleFullException e) {
+        return error(HttpStatus.CONFLICT, "ROLE_FULL", e.getMessage());
+    }
+
+    @ExceptionHandler(RoleRequiredException.class)
+    public ResponseEntity<Object> handleRoleRequired(RoleRequiredException e) {
+        return error(HttpStatus.CONFLICT, "ROLE_REQUIRED", e.getMessage());
+    }
+
+    @ExceptionHandler(InvalidStartConditionsException.class)
+    public ResponseEntity<Object> handleInvalidStartConditions(InvalidStartConditionsException e) {
+        return error(HttpStatus.CONFLICT, e.getCode(), e.getMessage());
+    }
+
+    @ExceptionHandler(GameStartPendingException.class)
+    public ResponseEntity<Object> handleGameStartPending(GameStartPendingException e) {
+        return error(HttpStatus.CONFLICT, "GAME_START_NOT_IMPLEMENTED", e.getMessage());
+    }
+
+    @ExceptionHandler(NotEnoughPlayersException.class)
+    public ResponseEntity<Object> handleNotEnoughPlayers(NotEnoughPlayersException e) {
+        return error(HttpStatus.CONFLICT, "NOT_ENOUGH_PLAYERS", e.getMessage());
+    }
+
     @ExceptionHandler(RoomFullException.class)
     public ResponseEntity<Object> handleRoomFull(RoomFullException e) {
         return error(HttpStatus.CONFLICT, "ROOM_FULL", "방이 가득 찼습니다.");
@@ -51,6 +81,12 @@ public class GlobalExceptionHandler extends ResponseEntityExceptionHandler {
     @ExceptionHandler(AiServiceException.class)
     public ResponseEntity<Object> handleAiService(AiServiceException e) {
         return error(HttpStatus.BAD_GATEWAY, "AI_SERVICE_ERROR", "AI 서비스 요청을 처리하지 못했습니다.");
+    }
+
+    // Only our dedicated settings exception exposes field-level validation details.
+    @ExceptionHandler(InvalidRoomSettingsException.class)
+    public ResponseEntity<Object> handleInvalidRoomSettings(InvalidRoomSettingsException e) {
+        return error(HttpStatus.BAD_REQUEST, "BAD_REQUEST", e.getMessage());
     }
 
     @ExceptionHandler(IllegalArgumentException.class)

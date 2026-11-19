@@ -6,6 +6,8 @@ import com.debate.game.dto.DebateLogResponse;
 import com.debate.game.dto.DebateStateResponse;
 import com.debate.game.entity.*;
 import com.debate.game.entity.enums.DebateRole;
+import com.debate.game.entity.enums.LobbyRole;
+import com.debate.game.entity.enums.Stance;
 import com.debate.game.entity.enums.RoomStatus;
 import com.debate.game.repository.*;
 import lombok.RequiredArgsConstructor;
@@ -62,7 +64,7 @@ public class DebateService {
         if (player.getRoom() == null || !player.getRoom().getId().equals(roomId)) {
             throw new IllegalArgumentException("해당 방의 플레이어가 아닙니다.");
         }
-        if (player.getRole() != DebateRole.MODERATOR) {
+        if (player.getRole() != LobbyRole.MODERATOR) {
             throw new IllegalStateException("사회자만 토론을 종료할 수 있습니다.");
         }
         if (room.getStatus() != RoomStatus.IN_PROGRESS) {
@@ -91,11 +93,12 @@ public class DebateService {
         if (player.getRoom() == null || !player.getRoom().getId().equals(roomId)) {
             throw new IllegalArgumentException("해당 방의 플레이어가 아닙니다.");
         }
-        if (player.getRole() != room.getCurrentTurnRole()) {
-            throw new IllegalStateException("현재 발언 차례가 아닙니다.");
+        if (player.getRole() != LobbyRole.GUEST || player.getStance() == null) {
+            throw new IllegalStateException("해당 물품에 찬성 또는 반대를 선택한 객원만 발언할 수 있습니다.");
         }
-        if (player.getRole() != DebateRole.PRO && player.getRole() != DebateRole.CON) {
-            throw new IllegalStateException("찬성 또는 반대 역할만 발언할 수 있습니다.");
+        DebateRole speakerStance = player.getStance() == Stance.PRO ? DebateRole.PRO : DebateRole.CON;
+        if (speakerStance != room.getCurrentTurnRole()) {
+            throw new IllegalStateException("현재 발언 차례가 아닙니다.");
         }
 
         SituationCard card = null;
@@ -108,7 +111,7 @@ public class DebateService {
             if (card.isUsed()) {
                 throw new IllegalStateException("이미 사용된 카드입니다.");
             }
-            if (card.getOwnerRole() != player.getRole()) {
+            if (card.getOwnerRole() != speakerStance) {
                 throw new IllegalStateException("본인 진영의 카드가 아닙니다.");
             }
             card.setUsed(true);
@@ -117,7 +120,7 @@ public class DebateService {
         // 일반 발언은 점수 변화가 없고, 카드 체인 평가는 현재 더미 점수·반응을 기록한다.
         DebateLog log = new DebateLog();
         log.setRoom(room);
-        log.setSpeakerRole(player.getRole());
+        log.setSpeakerRole(speakerStance);
         log.setChatContext(text);
         log.setUsedCard(card);
         if (card != null) {
@@ -126,7 +129,7 @@ public class DebateService {
         }
         debateLogRepository.save(log);
 
-        room.setCurrentTurnRole(player.getRole() == DebateRole.PRO
+        room.setCurrentTurnRole(speakerStance == DebateRole.PRO
                 ? DebateRole.CON : DebateRole.PRO);
         return log;
     }

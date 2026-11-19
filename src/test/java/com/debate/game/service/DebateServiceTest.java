@@ -3,6 +3,8 @@ package com.debate.game.service;
 import com.debate.game.entity.Player;
 import com.debate.game.entity.Room;
 import com.debate.game.entity.enums.DebateRole;
+import com.debate.game.entity.enums.LobbyRole;
+import com.debate.game.entity.enums.Stance;
 import com.debate.game.entity.enums.RoomStatus;
 import com.debate.game.repository.DebateLogRepository;
 import com.debate.game.repository.PlayerRepository;
@@ -44,7 +46,8 @@ class DebateServiceTest {
         player = new Player();
         player.setId(12L);
         player.setRoom(room);
-        player.setRole(DebateRole.PRO);
+        player.setRole(LobbyRole.GUEST);
+        player.setStance(Stance.PRO);
 
         when(roomRepository.findByIdForUpdate(7L)).thenReturn(Optional.of(room));
         lenient().when(roomRepository.findById(7L)).thenReturn(Optional.of(room));
@@ -66,10 +69,24 @@ class DebateServiceTest {
                         && log.getUsedCard() == null));
     }
 
+    @Test
+    void guestMustVotePerItemBeforeSpeaking() {
+        player.setStance(null);
+        assertThrows(IllegalStateException.class, () -> service.submitSpeech(7L, 12L, "발언 내용"));
+        verify(debateLogRepository, never()).save(any());
+    }
+
+    @Test
+    void moderatorCannotSpeakAsGuestEvenWithStance() {
+        player.setRole(LobbyRole.MODERATOR);
+        assertThrows(IllegalStateException.class, () -> service.submitSpeech(7L, 12L, "발언 내용"));
+        verify(debateLogRepository, never()).save(any());
+    }
+
     // 현재 차례가 아닌 진영의 발언은 기록되거나 차례를 바꾸면 안 된다.
     @Test
     void playerCannotSpeakOutOfTurn() {
-        player.setRole(DebateRole.CON);
+        player.setStance(Stance.CON);
 
         assertThrows(IllegalStateException.class, () -> service.submitSpeech(7L, 12L, "발언 내용"));
         verify(debateLogRepository, never()).save(any());

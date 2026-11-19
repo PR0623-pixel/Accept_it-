@@ -2,6 +2,9 @@
 package com.debate.game.controller;
 
 import com.debate.game.dto.RoleSelectRequest;
+import com.debate.game.dto.StartCheckRequest;
+import com.debate.game.dto.RoomSettingsUpdateRequest;
+import com.debate.game.dto.ReadyToggleRequest;
 import com.debate.game.dto.JoinRoomRequest;
 import com.debate.game.dto.RoomCreateRequest;
 import com.debate.game.dto.RoomEnterResponse;
@@ -68,7 +71,7 @@ public class RoomController {
     // R07/R08: REST leave endpoint; frontend lobby transport remains WebSocket.
     @Operation(summary = "로비 나가기 / Host 방 폐쇄",
             description = "WAITING 로비에서 일반 참가자는 본인만 퇴장하고, Host는 모든 참가자와 방을 삭제합니다. " +
-                    "Host 퇴장 시 방 코드는 즉시 무효화됩니다. WebSocket 알림은 후속 구현 범위입니다.")
+                    "Host 퇴장 시 방 코드는 즉시 무효화되고 R17 WebSocket 접속자에게 ROOM_NOT_FOUND가 전송됩니다.")
     @ApiResponses({
         @ApiResponse(responseCode = "204", description = "퇴장 완료"),
         @ApiResponse(responseCode = "404", description = "ROOM_NOT_FOUND 또는 PLAYER_NOT_IN_ROOM"),
@@ -82,7 +85,7 @@ public class RoomController {
     }
 
     // R06: inspection endpoint. Frontend currently consumes WebSocket ROOM_STATE, not this REST route.
-    @Operation(summary = "로비 정보 조회", description = "방 코드, Host, 참가자, 역할, Ready 및 설정값을 조회합니다. WebSocket ROOM_STATE 연동은 추후 단계입니다.")
+    @Operation(summary = "로비 정보 조회", description = "방 코드, Host, 참가자, 역할, Ready 및 설정값을 조회합니다. R17 WebSocket ROOM_STATE는 별도의 전체 상태 스냅샷을 제공합니다.")
     @ApiResponses({
         @ApiResponse(responseCode = "200", description = "조회 성공"),
         @ApiResponse(responseCode = "404", description = "ROOM_NOT_FOUND", content = @Content(schema = @Schema(implementation = ErrorResponse.class)))
@@ -92,17 +95,85 @@ public class RoomController {
         return ResponseEntity.ok(roomService.getLobby(roomCode));
     }
 
-    // 3. 누른 사람 역할군에 맞는 맵핑 (준비 완료)[cite: 1]
-    @Operation(summary = "역할 선택 및 준비 완료", description = "PRO, CON, MODERATOR 중 중복되지 않는 역할을 선택하고 준비 완료 처리합니다.")
+    // R13: temporary REST settings endpoint for Swagger verification.
+    // Frontend uses WebSocket UPDATE_SETTINGS, not this REST route.
+    @Operation(summary = "방 게임 설정 다섯 항목 저장 (임시 REST)",
+            description = "카드 수, 발언 시간, 반론 시간, 물품당 시간, 물품 수를 저장합니다. " +
+                    "R14 기준: cardsPerItem/maxItems=1~5, itemSeconds=180~1200(60초 단위), " +
+                    "speechSeconds/rebuttalSeconds=1~3600(임시 서버 범위). " +
+                    "설정 변경 시 전원 Ready가 해제됩니다. " +
+                    "R15에서는 소속 방 및 Host 여부를 검사하며, 연결자 신원 인증은 W 단계에서 연동합니다.")
+    @ApiResponses({
+        @ApiResponse(responseCode = "204", description = "설정 저장 성공"),
+        @ApiResponse(responseCode = "400", description = "누락된 설정 또는 잘못된 값"),
+        @ApiResponse(responseCode = "403", description = "NOT_HOST: Host만 변경 가능"),
+        @ApiResponse(responseCode = "404", description = "ROOM_NOT_FOUND 또는 PLAYER_NOT_IN_ROOM"),
+        @ApiResponse(responseCode = "409", description = "ALREADY_STARTED")
+    })
+    @PutMapping("/{roomCode}/settings")
+    public ResponseEntity<Void> updateSettings(@PathVariable String roomCode,
+            @RequestBody RoomSettingsUpdateRequest request) {
+        roomService.updateSettings(roomCode, request.playerIdAsLong(), request);
+        return ResponseEntity.noContent().build();
+    }
+
+    // R16: inspection-only endpoint. Successful validation does NOT start the game.
+    // The actual start transaction and VOTING transition are implemented in G03+.
+    @Operation(summary = "게임 시작 조건 확인 (R16 임시 REST)",
+            description = "Host 요청, 대기 로비, 참가자 정확히 3명, 사회자 1명/객원 2명, 전원 Ready를 확인합니다. " +
+                    "204는 조건 충족을 뜻할 뿐 게임을 시작하거나 카드를 배분하지 않습니다. " +
+                    "요청 playerId는 인증된 신원이 아니며 실제 시작 시에는 신원 확인이 필요합니다.")
+    @ApiResponses({
+        @ApiResponse(responseCode = "204", description = "게임 시작 조건 충족 (실제 시작은 수행하지 않음)"),
+        @ApiResponse(responseCode = "403", description = "NOT_HOST"),
+        @ApiResponse(responseCode = "404", description = "ROOM_NOT_FOUND 또는 PLAYER_NOT_IN_ROOM"),
+        @ApiResponse(responseCode = "409", description = "ALREADY_STARTED, NOT_ENOUGH_PLAYERS, INVALID_PLAYER_COUNT, " +
+                "INVALID_ROLE_COMPOSITION, NOT_ALL_READY")
+    })
+    @PostMapping("/{roomCode}/start/check")
+    public ResponseEntity<Void> checkStart(@PathVariable String roomCode,
+            @RequestBody StartCheckRequest request) {
+        roomService.validateStartConditions(roomCode, request.playerIdAsLong());
+        return ResponseEntity.noContent().build();
+    }
+
+    // R09/R10: temporary REST inspection route; SET_ROLE will use WebSocket.
+    @Operation(summary = "로비 역할 선택 (임시 REST)", description = "NONE, GUEST, MODERATOR 중 로비 역할을 선택합니다. 성공한 역할 선택(동일 역할 재선택 포함)은 Ready를 false로 초기화합니다. 사회자 1명, 객원 2명까지 선택할 수 있으며 정원이 차면 ROLE_FULL을 반환합니다. ")
     @ApiResponses({
         @ApiResponse(responseCode = "400", description = "존재하지 않는 플레이어 또는 잘못된 역할",
                 content = @Content(schema = @Schema(implementation = ErrorResponse.class))),
-        @ApiResponse(responseCode = "409", description = "이미 사용 중인 역할",
+        @ApiResponse(responseCode = "409", description = "ROLE_FULL: 역할 정원 초과 또는 진행 중인 방",
                 content = @Content(schema = @Schema(implementation = ErrorResponse.class)))
     })
-    @PostMapping("/ready")
-    public ResponseEntity<Void> selectRole(@RequestBody RoleSelectRequest request) {
-        roomService.selectRole(request.getPlayerId(), request.getRole());
-        return ResponseEntity.ok().build();
+    @PostMapping("/{roomCode}/role")
+    public ResponseEntity<Void> selectRole(
+            @PathVariable String roomCode,
+            @RequestBody RoleSelectRequest request) {
+
+        roomService.selectRole(
+                request.getPlayerId(),
+                request.getRole()
+        );
+
+        return ResponseEntity.noContent().build();
+    }
+    // R11: temporary REST endpoint to inspect/test the independent Ready toggle.
+    // The frontend contract uses WebSocket SET_READY {ready}; do not add this REST
+    // route to frontend/src/api/rest.ts as the production transport.
+    @Operation(summary = "Ready 설정/취소 (임시 REST)",
+            description = "대기 로비에서 플레이어의 준비 상태를 변경합니다. ready=true는 역할 선택이 필요하며, 1~2명이 있어도 가능합니다. ready=false는 준비를 취소합니다. 게임 시작에 필요한 3명·역할 구성·전원 Ready 검증은 R16에서 처리합니다.")
+    @ApiResponses({
+        @ApiResponse(responseCode = "204", description = "Ready 변경 완료"),
+        @ApiResponse(responseCode = "400", description = "ready 누락 등 잘못된 요청"),
+        @ApiResponse(responseCode = "404", description = "ROOM_NOT_FOUND 또는 PLAYER_NOT_IN_ROOM",
+                content = @Content(schema = @Schema(implementation = ErrorResponse.class))),
+        @ApiResponse(responseCode = "409", description = "ROLE_REQUIRED 또는 ALREADY_STARTED",
+                content = @Content(schema = @Schema(implementation = ErrorResponse.class)))
+    })
+    @PostMapping("/{roomCode}/ready")
+    public ResponseEntity<Void> setReady(@PathVariable String roomCode,
+            @RequestBody ReadyToggleRequest request) {
+        roomService.setReady(roomCode, request.playerIdAsLong(), request.readyValue());
+        return ResponseEntity.noContent().build();
     }
 }

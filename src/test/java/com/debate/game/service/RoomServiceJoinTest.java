@@ -1,6 +1,7 @@
 package com.debate.game.service;
 
 import com.debate.game.entity.Player;
+import com.debate.game.entity.enums.LobbyRole;
 import com.debate.game.entity.Room;
 import com.debate.game.entity.enums.RoomStatus;
 import com.debate.game.exception.AlreadyStartedException;
@@ -53,7 +54,7 @@ class RoomServiceJoinTest {
         assertEquals("31", result.playerId());
         verify(playerRepository).save(argThat(p ->
                 "둘째".equals(p.getPlayerName()) &&
-                p.getRoom() == room && p.getRole() == null && !p.isReady()));
+                p.getRoom() == room && p.getRole() == LobbyRole.NONE && p.getStance() == null && !p.isReady()));
     }
 
     @Test

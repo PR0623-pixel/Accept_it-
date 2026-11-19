@@ -1,6 +1,7 @@
 package com.debate.game.entity;
 
-import com.debate.game.entity.enums.DebateRole;
+import com.debate.game.entity.enums.LobbyRole;
+import com.debate.game.entity.enums.Stance;
 import jakarta.persistence.*;
 import lombok.Getter;
 import lombok.Setter;
@@ -8,7 +9,7 @@ import lombok.Setter;
 @Entity
 @Getter @Setter
 public class Player {
-    @Id 
+    @Id
     @GeneratedValue(strategy = GenerationType.IDENTITY)
     private Long id;
 
@@ -18,8 +19,15 @@ public class Player {
 
     private String playerName;
 
+    // Persistent room assignment; Host is stored separately on Room.hostPlayer.
     @Enumerated(EnumType.STRING)
-    private DebateRole role; // PRO, CON, MODERATOR
+    @Column(nullable = false)
+    private LobbyRole role = LobbyRole.NONE;
+
+    // Current procurement item's PRO/CON selection, not a lobby role.
+    // A voting stage will set and reset it for each item (G-stage work).
+    @Enumerated(EnumType.STRING)
+    private Stance stance;
 
     private boolean isReady = false;
 }

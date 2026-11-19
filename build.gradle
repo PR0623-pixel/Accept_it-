@@ -49,6 +49,9 @@ dependencies {
     // WebSocket 실시간 통신
     implementation 'org.springframework.boot:spring-boot-starter-websocket'
 
+    // R17: frontend uses plain (non-STOMP) JSON WebSocket frames.
+    implementation 'org.springframework.boot:spring-boot-starter-websocket'
+
     // Server Health Check
     implementation 'org.springframework.boot:spring-boot-starter-actuator'
 }

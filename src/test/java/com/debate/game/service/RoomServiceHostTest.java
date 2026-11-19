@@ -2,6 +2,7 @@ package com.debate.game.service;
 
 import com.debate.game.dto.RoomEnterResponse;
 import com.debate.game.entity.Player;
+import com.debate.game.entity.enums.LobbyRole;
 import com.debate.game.entity.Room;
 import com.debate.game.exception.InvalidNicknameException;
 import com.debate.game.repository.PlayerRepository;
@@ -52,7 +53,7 @@ class RoomServiceHostTest {
                 "홍길동".equals(p.getPlayerName()) &&
                 p.getRoom() != null &&
                 p.getRoom().getHostPlayer() == p &&
-                p.getRole() == null && !p.isReady()));
+                p.getRole() == LobbyRole.NONE && p.getStance() == null && !p.isReady()));
         verify(roomRepository, times(2)).save(argThat(r ->
                 r.getMaxCardCount() == 3 && r.getTurnTimeLimit() == 5));
     }
