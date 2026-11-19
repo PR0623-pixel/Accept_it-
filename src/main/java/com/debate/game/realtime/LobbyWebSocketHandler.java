@@ -111,6 +111,7 @@ public class LobbyWebSocketHandler extends TextWebSocketHandler {
                         requiredInteger(payload, "cardsPerItem"));
                 case "START_GAME" -> roomService.startGame(source.roomCode(), source.playerId());
                 case "VOTE" -> vote(source, requiredText(payload, "stance"));
+                case "USE_CARD" -> useCard(source, requiredLong(payload, "cardId"));
                 default -> throw new IllegalArgumentException("현재 지원하지 않는 이벤트입니다.");
             }
         } catch (Exception e) {
@@ -129,6 +130,19 @@ public class LobbyWebSocketHandler extends TextWebSocketHandler {
                 .orElseThrow(() -> new GameActionException("INVALID", "진행 중인 게임 상태를 찾을 수 없습니다."));
         state.vote(source.playerId(), stance, System.currentTimeMillis());
         broadcastRoomState(source.roomCode());
+    }
+
+    private void useCard(ParticipantSocket source, Long cardId) {
+        RoomGameState state = gameStateStore.find(source.roomCode())
+                .orElseThrow(() -> new GameActionException(
+                        "INVALID",
+                        "진행 중인 게임 상태를 찾을 수 없습니다."
+                ));
+
+        state.useCard(source.playerId(), cardId);
+
+        // 갱신된 손패는 카드 소유자에게만 보냅니다.
+        sendQuietly(source.socket(), "HAND", state.handFor(source.playerId()));
     }
 
     private static String requiredText(JsonNode node, String name) {
@@ -153,6 +167,14 @@ public class LobbyWebSocketHandler extends TextWebSocketHandler {
             throw new IllegalArgumentException(name + "은 정수여야 합니다.");
         }
         return value.intValue();
+    }
+    private static Long requiredLong(JsonNode node, String name) {
+        JsonNode value = node.get(name);
+        if (value == null || !value.isIntegralNumber() || !value.canConvertToLong()
+                || value.longValue() <= 0) {
+            throw new IllegalArgumentException(name + "은 양의 정수여야 합니다.");
+        }
+        return value.longValue();
     }
 
     private static String codeOf(Exception ex) {

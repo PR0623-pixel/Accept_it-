@@ -105,6 +105,45 @@ public class RoomGameState {
         return List.copyOf(chatHistory);
     }
 
+    public synchronized void giveCards(Long playerId, List<CardPayload> cards) {
+        PlayerState player = players.get(playerId);
+        if (player == null) {
+            throw new GameActionException("PLAYER_NOT_IN_ROOM", "방의 참가자가 아닙니다.");
+        }
+
+        hands.put(playerId, new ArrayList<>(cards));
+    }
+
+    public synchronized CardPayload useCard(Long playerId, Long cardId) {
+        List<CardPayload> hand = hands.get(playerId);
+        if (hand == null) {
+            throw new GameActionException("INVALID", "손패가 없습니다.");
+        }
+
+        CardPayload card = hand.stream()
+                .filter(item -> item.cardId() == cardId)
+                .findFirst()
+                .orElseThrow(() -> new GameActionException(
+                        "CARD_NOT_IN_HAND",
+                        "본인 손패에 없는 카드입니다."
+                ));
+
+        if (card.used()) {
+            throw new GameActionException("CARD_ALREADY_USED", "이미 사용한 카드입니다.");
+        }
+
+        int index = hand.indexOf(card);
+        hand.set(index, new CardPayload(
+                card.cardId(),
+                card.keyword(),
+                card.title(),
+                card.description(),
+                true
+        ));
+        return hand.get(index);
+    }
+
+
     @Getter
     @Setter
     public static class PlayerState {
