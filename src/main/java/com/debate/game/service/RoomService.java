@@ -15,10 +15,12 @@ import com.debate.game.dto.RoomEnterResponse;
 import com.debate.game.dto.RoomSettingsUpdateRequest;
 import com.debate.game.exception.NotHostException;
 import com.debate.game.entity.Player;
+import com.debate.game.entity.ProcurementItem;
 import com.debate.game.entity.enums.RoomStatus;
 import com.debate.game.entity.Room;
 import com.debate.game.entity.enums.LobbyRole;
 import com.debate.game.repository.PlayerRepository;
+import com.debate.game.repository.ProcurementItemRepository;
 import com.debate.game.repository.RoomRepository;
 import lombok.RequiredArgsConstructor;
 import org.springframework.beans.factory.annotation.Autowired;
@@ -48,10 +50,15 @@ public class RoomService {
     // R01-R16 tests. Spring injects this in production; direct unit instances
     // have no transport side effects unless explicitly configured.
     private ApplicationEventPublisher lobbyEventPublisher;
+    private ProcurementItemRepository procurementItemRepository;
 
     @Autowired
     public void setLobbyEventPublisher(ApplicationEventPublisher publisher) {
         this.lobbyEventPublisher = publisher;
+    }
+    @Autowired 
+    public void setProcurementItemRepository(ProcurementItemRepository repository){
+        this.procurementItemRepository = repository;
     }
 
     private void lobbyChanged(String roomCode, Long leftPlayerId, boolean roomClosed) {
@@ -186,6 +193,7 @@ public class RoomService {
         playerRepository.delete(player);
         lobbyChanged(room.getRoomCode(), playerId, false);
     }
+    
 
     // R06: read-only lobby snapshot. Reused later by the WebSocket ROOM_STATE mapper.
     @Transactional(readOnly = true)
@@ -216,7 +224,9 @@ public class RoomService {
                 new com.debate.game.dto.LobbySnapshotResponse.LobbySettings(
                         room.getMaxItems(), room.getTurnTimeLimit() * 60,
                         room.getMaxCardCount(), room.getSpeechSeconds(),
-                        room.getRebuttalSeconds()));
+                        room.getRebuttalSeconds()),
+                    currentItemSnapshot(room)
+                );
     }
     //통신 간, 참가자 검증 조회
     @Transactional(readOnly = true)
@@ -261,9 +271,7 @@ public class RoomService {
                         .map(p -> new com.debate.game.dto.LobbySnapshotResponse.LobbyPlayer(
                                 p.getId().toString(),
                                 p.getPlayerName(),
-                                p.getRole() == null ? "NONE"
-                                        : p.getRole() == DebateRole.MODERATOR
-                                                ? "MODERATOR" : "GUEST",
+                                p.getRole() == null ? LobbyRole.NONE.name() : p.getRole().name(),
                                 p.isReady(),
                                 room.getHostPlayer() != null
                                         && Objects.equals(room.getHostPlayer().getId(), p.getId())
@@ -278,10 +286,26 @@ public class RoomService {
                         : room.getStatus() == RoomStatus.FINISHED ? "RESULT" : "VOTING",
                 players,
                 new com.debate.game.dto.LobbySnapshotResponse.LobbySettings(
-                        5,
+                        room.getMaxItems(),
                         room.getTurnTimeLimit() * 60,
-                        room.getMaxCardCount()
-                )
+                        room.getMaxCardCount(),
+                        room.getSpeechSeconds(),
+                        room.getRebuttalSeconds()
+                ),
+                currentItemSnapshot(room)
+        );
+    }
+
+    private com.debate.game.dto.LobbySnapshotResponse.ItemSnapshot currentItemSnapshot(Room room) {
+    var item = room.getCurrentProcurementItem();
+    if (item == null || room.getStatus() != RoomStatus.IN_PROGRESS) {
+        return null;
+        }
+
+    return new com.debate.game.dto.LobbySnapshotResponse.ItemSnapshot(
+            1,
+            item.getItemName(),
+            item.getDescription()
         );
     }
 
@@ -373,28 +397,34 @@ public class RoomService {
     // creating the session, so conditions cannot change between check and start.
     @Transactional
     public void validateStartConditions(String roomCode, Long playerId) {
-        String normalizedCode = roomCode == null ? "" : roomCode.strip().toUpperCase(Locale.ROOT);
-        if (!normalizedCode.matches("[A-Z0-9]{6}")) {
-            throw new InvalidRoomCodeException("방을 찾을 수 없습니다.");
-        }
+        // 저장소 조회 전에 요청자 ID부터 검증해야 합니다.
         if (playerId == null || playerId <= 0) {
             throw new PlayerNotInRoomException();
         }
 
-        // Same order as R05/R10/R11/R15: lock Room, then locking-read members.
+        String normalizedCode = roomCode == null
+                ? ""
+                : roomCode.strip().toUpperCase(Locale.ROOT);
+        if (!normalizedCode.matches("[A-Z0-9]{6}")) {
+            throw new InvalidRoomCodeException("방을 찾을 수 없습니다.");
+        }
+
         Room room = roomRepository.findByRoomCodeForUpdate(normalizedCode)
                 .orElseThrow(() -> new InvalidRoomCodeException("방을 찾을 수 없습니다."));
         if (room.getStatus() != RoomStatus.WAITING) {
             throw new AlreadyStartedException();
         }
+
         List<Player> members = playerRepository.findByRoomForUpdate(room);
-        boolean callerIsMember = members.stream()
+
+                boolean callerIsMember = members.stream()
                 .anyMatch(p -> Objects.equals(p.getId(), playerId));
         if (!callerIsMember) {
             throw new PlayerNotInRoomException();
         }
-        if (room.getHostPlayer() == null ||
-                !Objects.equals(room.getHostPlayer().getId(), playerId)) {
+
+        if (room.getHostPlayer() == null
+                || !Objects.equals(room.getHostPlayer().getId(), playerId)) {
             throw new NotHostException("방장만 게임 시작을 요청할 수 있습니다.");
         }
 
@@ -403,19 +433,127 @@ public class RoomService {
         }
         if (members.size() != 3) {
             throw new InvalidStartConditionsException(
-                    "INVALID_PLAYER_COUNT", "시작하려면 참가자가 정확히 3명이어야 합니다.");
+                    "INVALID_PLAYER_COUNT",
+                    "시작하려면 참가자가 정확히 3명이어야 합니다.");
         }
-        long moderators = members.stream().filter(p -> p.getRole() == LobbyRole.MODERATOR).count();
-        long guests = members.stream().filter(p -> p.getRole() == LobbyRole.GUEST).count();
+
+        long moderators = members.stream()
+                .filter(p -> p.getRole() == LobbyRole.MODERATOR)
+                .count();
+        long guests = members.stream()
+                .filter(p -> p.getRole() == LobbyRole.GUEST)
+                .count();
+
         if (moderators != 1 || guests != 2) {
             throw new InvalidStartConditionsException(
-                    "INVALID_ROLE_COMPOSITION", "사회자 1명과 객원 2명이 역할을 선택해야 합니다.");
+                    "INVALID_ROLE_COMPOSITION",
+                    "사회자 1명과 객원 2명이 역할을 선택해야 합니다.");
         }
+
         if (members.stream().anyMatch(p -> !p.isReady())) {
             throw new InvalidStartConditionsException(
-                    "NOT_ALL_READY", "모든 참가자가 Ready 상태여야 합니다.");
+                    "NOT_ALL_READY",
+                    "모든 참가자가 Ready 상태여야 합니다.");
         }
-        // No Room.status update, session creation, or card distribution in R16.
+    }
+
+    @Transactional
+    public void startGame(String roomCode, Long playerId) {
+        String normalizedCode = roomCode == null
+                ? ""
+                : roomCode.strip().toUpperCase(Locale.ROOT);
+
+        // 동일 트랜잭션 안에서 Host·인원·역할·Ready를 검증합니다.
+        validateStartConditions(normalizedCode, playerId);
+
+        Room room = roomRepository.findByRoomCodeForUpdate(normalizedCode)
+                .orElseThrow(() -> new InvalidRoomCodeException("방을 찾을 수 없습니다."));
+
+        List<ProcurementItem> catalog = procurementItemRepository.findAll();
+        if (catalog.isEmpty()) {
+            throw new IllegalStateException("시작할 수 있는 물품이 없습니다.");
+        }
+
+        ProcurementItem firstItem =
+                catalog.get(java.util.concurrent.ThreadLocalRandom.current()
+                        .nextInt(catalog.size()));
+
+        room.setCurrentProcurementItem(firstItem);
+        room.setCurrentTopic(firstItem.getTopicCategory());
+        room.setCurrentTurnRole(null);
+
+        for (Player player : playerRepository.findByRoomForUpdate(room)) {
+            player.setStance(null);
+        }
+
+        room.setStatus(RoomStatus.IN_PROGRESS);
+
+        // 기존 AFTER_COMMIT listener가 커밋 후 최신 ROOM_STATE를 보냅니다.
+        lobbyChanged(room.getRoomCode(), null, false);
+    }
+
+    private Room lockWaitingRoom(String roomCode) {
+        String normalizedCode = roomCode == null
+                ? ""
+                : roomCode.strip().toUpperCase(Locale.ROOT);
+
+        if (!normalizedCode.matches("[A-Z0-9]{6}")) {
+            throw new InvalidRoomCodeException("방을 찾을 수 없습니다.");
+        }
+
+        Room room = roomRepository.findByRoomCodeForUpdate(normalizedCode)
+                .orElseThrow(() -> new InvalidRoomCodeException("방을 찾을 수 없습니다."));
+
+        if (room.getStatus() != RoomStatus.WAITING) {
+            throw new AlreadyStartedException();
+        }
+
+        return room;
+    }
+
+    private void requireValidStart(Room room, List<Player> members, Long playerId) {
+        if (playerId == null || playerId <= 0) {
+            throw new PlayerNotInRoomException();
+        }
+
+        boolean callerIsMember = members.stream()
+                .anyMatch(player -> Objects.equals(player.getId(), playerId));
+        if (!callerIsMember) {
+            throw new PlayerNotInRoomException();
+        }
+
+        if (room.getHostPlayer() == null
+                || !Objects.equals(room.getHostPlayer().getId(), playerId)) {
+            throw new NotHostException("방장만 게임 시작을 요청할 수 있습니다.");
+        }
+
+        if (members.size() < 3) {
+            throw new NotEnoughPlayersException();
+        }
+        if (members.size() != 3) {
+            throw new InvalidStartConditionsException(
+                    "INVALID_PLAYER_COUNT",
+                    "시작하려면 참가자가 정확히 3명이어야 합니다.");
+        }
+
+        long moderators = members.stream()
+                .filter(player -> player.getRole() == LobbyRole.MODERATOR)
+                .count();
+        long guests = members.stream()
+                .filter(player -> player.getRole() == LobbyRole.GUEST)
+                .count();
+
+        if (moderators != 1 || guests != 2) {
+            throw new InvalidStartConditionsException(
+                    "INVALID_ROLE_COMPOSITION",
+                    "사회자 1명과 객원 2명이 역할을 선택해야 합니다.");
+        }
+
+        if (members.stream().anyMatch(player -> !player.isReady())) {
+            throw new InvalidStartConditionsException(
+                    "NOT_ALL_READY",
+                    "모든 참가자가 Ready 상태여야 합니다.");
+        }
     }
 
     // R09/R10: lobby assignment (NONE/GUEST/MODERATOR) with 1 moderator / 2 guests.

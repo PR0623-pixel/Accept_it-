@@ -15,4 +15,7 @@ public class ProcurementItem {
     private String itemName; // 예: "의료 키트", "전술 드론"
 
     private String topicCategory; // 예: "국방", "의료"
+
+    @Column(columnDefinition = "TEXT", nullable = false)
+    private String description;
 }

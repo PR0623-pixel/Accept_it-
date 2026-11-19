@@ -120,8 +120,6 @@ class MockServer {
     r.players.forEach((p) => { p.stance = null; p.hasVoted = false; });
     this.chat = [];
     this.listener?.({ type: 'CHAT_HISTORY', payload: [] });
-    this.hands.clear();
-    r.players.forEach((p) => this.hands.set(p.id, p.role === 'GUEST' ? this.deal(r.settings.cardsPerItem) : []));
     this.say(`물품 ${index}/${r.settings.maxItems}: ${r.currentItem.name} — 찬성/반대를 선택하세요.`);
     
   }
@@ -156,7 +154,7 @@ class MockServer {
     const r = this.room;
     const me = r?.players.find((p) => p.id === this.viewerId);
     if (!r || !me) return;
-    const guests = () => r.players.filter((p) => p.role === 'GUEST');
+    const guestCount = () => r.players.filter((p) => p.role === 'GUEST');
 
     switch (ev.type) {
       case 'UPDATE_SETTINGS': {
@@ -181,18 +179,45 @@ class MockServer {
         break;
       }
       case 'SET_READY': {
-        if (r.phase !== 'LOBBY') return;
-        if (ev.payload.ready) {
-          if (me.role === 'NONE') return this.fail('ROLE_REQUIRED', '역할 칸으로 먼저 이동하세요.');
-          if (r.players.length < REQUIRED_PLAYERS) return this.fail('NOT_ENOUGH_PLAYERS', '인원이 부족합니다. 3명이 모여야 시작할 수 있습니다.');
+        if (r.phase !== 'LOBBY') return this.fail('ALREADY_STARTED', '대기 중인 로비에서만 준비할 수 있습니다.');
+        if (ev.payload.ready && me.role === 'NONE') {
+          return this.fail('ROLE_REQUIRED', '역할 칸으로 먼저 이동하세요.');
         }
+
+        // Ready는 개별 의사 표시입니다. 인원/역할/전원 Ready 검증은 START_GAME에서 합니다.
         me.ready = ev.payload.ready;
-        if (r.players.length === REQUIRED_PLAYERS && r.players.every((p) => p.ready)) {
-          // [BACKEND] 여기서 AI(WebClient)로 물품 maxItems 개를 생성하고 DB에서 카드를 뽑아야 합니다. (지연 시간 주의)
-          this.items = [...ITEMS].sort(() => Math.random() - 0.5).slice(0, r.settings.maxItems).map((it, i) => ({ ...it, index: i + 1 }));
-          r.results = [];
-          this.startItem(1);
+        break;
+      }
+
+      case 'START_GAME': {
+        if (r.phase !== 'LOBBY') {
+          return this.fail('ALREADY_STARTED', '이미 시작된 방입니다.');
         }
+        if (!me.isHost) {
+          return this.fail('NOT_HOST', '방장만 게임을 시작할 수 있습니다.');
+        }
+        if (r.players.length < REQUIRED_PLAYERS) {
+          return this.fail('NOT_ENOUGH_PLAYERS', '3명이 모여야 게임을 시작할 수 있습니다.');
+        }
+        if (r.players.length !== REQUIRED_PLAYERS) {
+          return this.fail('INVALID_PLAYER_COUNT', '참가자는 정확히 3명이어야 합니다.');
+        }
+
+        const moderatorCount = r.players.filter((p) => p.role === 'MODERATOR').length;
+        const guestCount = r.players.filter((p) => p.role === 'GUEST').length;
+        if (moderatorCount !== 1 || guestCount !== 2) {
+          return this.fail('INVALID_ROLE_COMPOSITION', '사회자 1명과 객원 2명이 필요합니다.');
+        }
+        if (r.players.some((p) => !p.ready)) {
+          return this.fail('NOT_ALL_READY', '모든 참가자가 Ready 상태여야 합니다.');
+        }
+
+        this.items = [...ITEMS]
+          .sort(() => Math.random() - 0.5)
+          .slice(0, r.settings.maxItems)
+          .map((item, index) => ({ ...item, index: index + 1 }));
+        r.results = [];
+        this.startItem(1);
         break;
       }
       case 'VOTE': {
@@ -200,10 +225,23 @@ class MockServer {
         if (me.hasVoted) return this.fail('ALREADY_VOTED', '이미 선택했습니다.');
         me.stance = ev.payload.stance; me.hasVoted = true;
         this.say(`${me.nickname}님이 선택을 마쳤습니다.`);
-        const [a, b] = guests();
+        const [a, b] = guestCount();
         if (a?.hasVoted && b?.hasVoted) {
-          if (a.stance === b.stance) { r.phase = 'MODERATOR_DECISION'; this.say('두 객원의 의견이 일치합니다. 사회자의 결정으로 넘어갑니다.'); }
-          else { r.phase = 'DEBATE'; r.itemEndsAt = Date.now() + r.settings.itemSeconds * 1000; this.say('의견이 갈렸습니다. 토론을 시작하세요!'); }
+          if (a.stance === b.stance) {
+            r.phase = 'MODERATOR_DECISION';
+            this.say('두 객원의 의견이 일치합니다. 사회자의 결정으로 넘어갑니다.');
+          } else {
+            r.phase = 'DEBATE';
+            r.itemEndsAt = Date.now() + r.settings.itemSeconds * 1000;
+
+            // 투표 후 진영이 결정된 다음 객원에게 손패를 줍니다.
+            this.hands.clear();
+            for (const guest of [a, b]) {
+              this.hands.set(guest.id, this.deal(r.settings.cardsPerItem));
+            }
+
+            this.say('의견이 갈렸습니다. 토론을 시작하세요!');
+          }
         }
         break;
       }

@@ -95,6 +95,8 @@ public class LobbyWebSocketHandler extends TextWebSocketHandler {
                 case "UPDATE_SETTINGS" -> roomService.updateSocketSettings(source.roomCode(), source.playerId(),
                         requiredInteger(payload, "maxItems"), requiredInteger(payload, "itemSeconds"),
                         requiredInteger(payload, "cardsPerItem"));
+                case "START_GAME" ->
+                        roomService.startGame(source.roomCode(), source.playerId());
                 default -> throw new IllegalArgumentException("현재 지원하지 않는 로비 이벤트입니다.");
             }
             // Success is broadcast by the AFTER_COMMIT listener, never here.
@@ -123,14 +125,18 @@ public class LobbyWebSocketHandler extends TextWebSocketHandler {
     }
 
     private static String codeOf(Exception ex) {
-        if (ex instanceof NotHostException) return "NOT_HOST";
-        if (ex instanceof RoleFullException) return "ROLE_FULL";
-        if (ex instanceof RoleRequiredException) return "ROLE_REQUIRED";
-        if (ex instanceof PlayerNotInRoomException) return "PLAYER_NOT_IN_ROOM";
-        if (ex instanceof InvalidRoomCodeException) return "ROOM_NOT_FOUND";
-        if (ex instanceof AlreadyStartedException) return "ALREADY_STARTED";
-        return "INVALID";
+    if (ex instanceof NotHostException) return "NOT_HOST";
+    if (ex instanceof RoleFullException) return "ROLE_FULL";
+    if (ex instanceof RoleRequiredException) return "ROLE_REQUIRED";
+    if (ex instanceof NotEnoughPlayersException) return "NOT_ENOUGH_PLAYERS";
+    if (ex instanceof InvalidStartConditionsException startError) {
+        return startError.getCode();
     }
+    if (ex instanceof PlayerNotInRoomException) return "PLAYER_NOT_IN_ROOM";
+    if (ex instanceof InvalidRoomCodeException) return "ROOM_NOT_FOUND";
+    if (ex instanceof AlreadyStartedException) return "ALREADY_STARTED";
+    return "INVALID";
+}
 
     private static String userMessage(Exception ex) {
         String message = ex.getMessage();

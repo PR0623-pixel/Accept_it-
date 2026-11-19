@@ -96,8 +96,26 @@ export default function RoomPage() {
 
       <div className="ready-bar" style={{ position: 'fixed', right: 16, bottom: 16, display: 'flex', alignItems: 'center', gap: 10, zIndex: 40, background: '#fbfaf7', border: '4px solid #2b2a33', padding: '8px 12px', boxShadow: '4px 4px 0 rgba(0,0,0,.4)' }}>
         <span className="count" style={{ fontSize: '1.4rem', fontWeight: 700 }}>{readyCount}/{REQUIRED_PLAYERS}</span>
-        <button className="btn big" onClick={toggleReady}>{me.ready ? '준비 취소' : 'READY'}</button>
+        
+        <button className="btn big"
+        onClick={toggleReady}>
+          {me.ready ? '준비 취소' : 'READY'}
+        </button>
+
+        {me.isHost && (
+          <button className="btn big"
+          disabled={
+            room.players.length !== REQUIRED_PLAYERS ||
+            room.players.some((p) => !p.ready) ||
+            room.players.filter((p) => p.role === 'MODERATOR').length !== 1 ||
+            room.players.filter((p) => p.role === 'GUEST').length !== 2
+          }
+            onClick={() => send({ type: 'START_GAME', payload: {} })}
+          >
+            게임 시작
+          </button>
+        )}
+        </div>
       </div>
-    </div>
   )
 }
