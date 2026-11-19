@@ -2,10 +2,13 @@
 AcceptIt_Unity/
 
 ### Gradle ###
-.gradle/
+# .gradle/
 
 ### build ###
 **/build/
+
+### bin ###
+bin/
 
 ### IntelliJ IDEA ###
 .idea/
@@ -26,6 +29,8 @@ out/
 application-local.yml
 application-local.yaml
 application-local.properties
+**/application.yml
+
 
 ### logs and temp files ###
 *.log
