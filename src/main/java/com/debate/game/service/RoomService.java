@@ -504,13 +504,16 @@ public class RoomService {
                 new java.util.ArrayList<>(shuffledItems.subList(0, itemCount));
 
         ProcurementItem firstItem = selectedItems.get(0);
-        createInitialSituationCards(room, firstItem);
-        // RoomGameState가 사용할 전체 물품 목록
+
+        // RoomGameState가 사용할 전체 물품 목록을 만들고,
+        // 각 물품에 속한 상황 카드도 함께 생성합니다.
         List<RoomStatePayload.ItemPayload> gameItems = new java.util.ArrayList<>();
-        
+
         for (int i = 0; i < selectedItems.size(); i++) {
             ProcurementItem item = selectedItems.get(i);
-            
+
+            createInitialSituationCards(room, item);
+
             gameItems.add(new RoomStatePayload.ItemPayload(
                     i + 1,
                     item.getItemName(),
