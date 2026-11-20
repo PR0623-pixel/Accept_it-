@@ -111,7 +111,13 @@ public class LobbyWebSocketHandler extends TextWebSocketHandler {
                         requiredInteger(payload, "cardsPerItem"));
                 case "START_GAME" -> roomService.startGame(source.roomCode(), source.playerId());
                 case "VOTE" -> vote(source, requiredText(payload, "stance"));
-                case "USE_CARD" -> useCard(source, requiredLong(payload, "cardId"));
+                // case "USE_CARD" -> useCard(source, requiredLong(payload, "cardId"));
+                case "START_SPEECH" -> startSpeech(source, requiredLong(payload, "cardId"));
+                case "END_SPEECH" -> endSpeech(source);
+                case "SEND_CHAT" -> sendChat(source, requiredText(payload, "text"));
+                case "REQUEST_REBUTTAL" -> requestRebuttal(source, requiredLong(payload, "cardId"));
+                case "DECIDE_REBUTTAL" -> decideRebuttal(source, requiredBoolean(payload, "approve"));
+                case "DECIDE_ITEM" -> decideItem(source, requiredBoolean(payload, "accept"));
                 default -> throw new IllegalArgumentException("현재 지원하지 않는 이벤트입니다.");
             }
         } catch (Exception e) {
@@ -132,6 +138,45 @@ public class LobbyWebSocketHandler extends TextWebSocketHandler {
         broadcastRoomState(source.roomCode());
     }
 
+    private RoomGameState gameState(ParticipantSocket source) {
+    return gameStateStore.find(source.roomCode())
+            .orElseThrow(() -> new GameActionException(
+                    "INVALID",
+                    "진행 중인 게임 상태를 찾을 수 없습니다."
+            ));
+    }
+
+    private void startSpeech(ParticipantSocket source, Long cardId) {
+        gameState(source).startSpeech(source.playerId(), cardId, System.currentTimeMillis());
+        broadcastRoomState(source.roomCode());
+    }
+
+    private void endSpeech(ParticipantSocket source) {
+        gameState(source).endSpeech(source.playerId());
+        broadcastRoomState(source.roomCode());
+    }
+
+    private void sendChat(ParticipantSocket source, String text) {
+        var chat = gameState(source).sendChat(source.playerId(), text, System.currentTimeMillis());
+        for (ParticipantSocket connection : connections.values()) {
+            if (source.roomCode().equals(connection.roomCode())) {
+                sendQuietly(connection.socket(), "CHAT", chat);
+            }
+        }
+    }
+    private void requestRebuttal(ParticipantSocket source, Long cardId) {
+        RoomGameState state = gameState(source);
+        state.requestRebuttal(source.playerId(), cardId, System.currentTimeMillis());
+        sendQuietly(source.socket(), "HAND", state.handFor(source.playerId()));
+        broadcastRoomState(source.roomCode());
+    }
+
+    private void decideRebuttal(ParticipantSocket source, boolean approve) {
+        RoomGameState state = gameState(source);
+        state.decideRebuttal(source.playerId(), approve, System.currentTimeMillis());
+        broadcastRoomState(source.roomCode());
+    }
+
     private void useCard(ParticipantSocket source, Long cardId) {
         RoomGameState state = gameStateStore.find(source.roomCode())
                 .orElseThrow(() -> new GameActionException(
@@ -143,6 +188,25 @@ public class LobbyWebSocketHandler extends TextWebSocketHandler {
 
         // 갱신된 손패는 카드 소유자에게만 보냅니다.
         sendQuietly(source.socket(), "HAND", state.handFor(source.playerId()));
+    }
+
+    private void decideItem(
+        ParticipantSocket source,
+        boolean accept
+    ) {
+        RoomGameState state = gameStateStore.find(source.roomCode())
+                .orElseThrow(() -> new GameActionException(
+                        "INVALID",
+                        "진행 중인 게임 상태를 찾을 수 없습니다."
+                ));
+
+        state.decideItem(
+                source.playerId(),
+                accept,
+                System.currentTimeMillis()
+        );
+
+        broadcastRoomState(source.roomCode());
     }
 
     private static String requiredText(JsonNode node, String name) {
