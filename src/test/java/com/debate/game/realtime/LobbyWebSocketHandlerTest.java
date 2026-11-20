@@ -67,6 +67,7 @@ class LobbyWebSocketHandlerTest {
         return new RoomGameState("ABC123",
                 java.util.List.of(
                     new com.debate.game.dto.websocket.RoomStatePayload.ItemPayload(1, "물품", "설명")),
+                List.of(1L),
                 new com.debate.game.dto.websocket.RoomStatePayload.RoomSettingsPayload(3, 300, 3),
                 List.of(
                         new RoomGameState.PlayerState(11L, "객원1", LobbyRole.GUEST, true, true),

@@ -488,6 +488,8 @@ public class RoomService {
         Room room = roomRepository.findByRoomCodeForUpdate(normalizedCode)
                 .orElseThrow(() -> new InvalidRoomCodeException("방을 찾을 수 없습니다."));
 
+        
+
         List<ProcurementItem> catalog = procurementItemRepository.findAll();
         if (catalog.isEmpty()) {
             throw new IllegalStateException("시작할 수 있는 물품이 없습니다.");
@@ -516,9 +518,6 @@ public class RoomService {
             ));
         }
 
-        // 첫 물품의 상황 카드 생성
-        createInitialSituationCards(room, firstItem);
-
         room.setCurrentProcurementItem(firstItem);
         room.setCurrentTopic(firstItem.getTopicCategory());
         room.setCurrentTurnRole(null);
@@ -540,10 +539,14 @@ public class RoomService {
                                 && Objects.equals(room.getHostPlayer().getId(), player.getId())
                 ))
                 .toList();
+        List<Long> procurementItemIds = selectedItems.stream()
+        .map(ProcurementItem::getId)
+        .toList();
 
         RoomGameState gameState = new RoomGameState(
                 room.getRoomCode(),
                 gameItems,
+                procurementItemIds,
                 new RoomStatePayload.RoomSettingsPayload(
                         room.getMaxItems(),
                         room.getTurnTimeLimit() * 60,
@@ -556,6 +559,27 @@ public class RoomService {
         if (lobbyEventPublisher != null) {
             lobbyEventPublisher.publishEvent(new GameStartedEvent(gameState));
         }
+    }
+
+    @Transactional
+    public void updateCurrentProcurementItem(String roomCode, Long procurementItemId) {
+        String code = roomCode == null
+                ? ""
+                : roomCode.strip().toUpperCase(Locale.ROOT);
+
+        if (!code.matches("[A-Z0-9]{6}") || procurementItemId == null) {
+            throw new IllegalArgumentException("방 또는 물품 정보가 올바르지 않습니다.");
+        }
+
+        Room room = roomRepository.findByRoomCodeForUpdate(code)
+                .orElseThrow(() -> new InvalidRoomCodeException("방을 찾을 수 없습니다."));
+
+        ProcurementItem item = procurementItemRepository.findById(procurementItemId)
+                .orElseThrow(() -> new IllegalArgumentException("물품을 찾을 수 없습니다."));
+
+        room.setCurrentProcurementItem(item);
+        room.setCurrentTopic(item.getTopicCategory());
+        room.setCurrentTurnRole(null);
     }
 
     @Transactional(readOnly = true)
@@ -576,6 +600,10 @@ public class RoomService {
 
         Room room = roomRepository.findByRoomCode(code)
                 .orElseThrow(() -> new InvalidRoomCodeException("방을 찾을 수 없습니다."));
+        ProcurementItem currentItem = room.getCurrentProcurementItem();
+        if (currentItem == null) {
+            throw new IllegalStateException("현재 진행 중인 물품이 설정되지 않았습니다.");
+        }
 
         int cardsPerGuest = room.getMaxCardCount();
         Map<Long, List<CardPayload>> handsByPlayer = new LinkedHashMap<>();
@@ -591,8 +619,9 @@ public class RoomService {
             DebateRole side = DebateRole.valueOf(stance.name());
             List<SituationCard> available =
                     situationCardRepository
-                            .findByRoom_IdAndOwnerRoleAndIsUsedFalseOrderByIdAsc(
+                            .findByRoom_IdAndProcurementItem_IdAndOwnerRoleAndIsUsedFalseOrderByIdAsc(
                                     room.getId(),
+                                    currentItem.getId(),
                                     side
                             );
 
@@ -703,6 +732,7 @@ private void saveSituationCard(
 ) {
     SituationCard card = new SituationCard();
     card.setRoom(room);
+    card.setProcurementItem(item);
     card.setOwnerRole(side);
     card.setKeyword(side.name() + " 키워드 " + index);
     card.setContent(

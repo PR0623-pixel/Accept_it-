@@ -18,6 +18,10 @@ public class SituationCard {
     @JoinColumn(name = "room_id")
     private Room room;
 
+    @ManyToOne(fetch = FetchType.LAZY)
+    @JoinColumn(name = "procurement_item_id")
+    private ProcurementItem procurementItem;
+
     // 2. AI가 추출하거나 커스텀 모드에서 설정한 쟁점 키워드 (예: "여성의 임신률 증가")
     @Column(nullable = false, length = 50)
     private String keyword;

@@ -264,11 +264,23 @@ public class LobbyWebSocketHandler extends TextWebSocketHandler {
                         "진행 중인 게임 상태를 찾을 수 없습니다."
                 ));
 
-        state.decideItem(
-                source.playerId(),
-                accept,
-                System.currentTimeMillis()
-        );
+        synchronized (state) {
+            int nextIndex = state.validateItemDecisionAndGetNextIndex(source.playerId());
+
+            if (nextIndex >= 0) {
+                Long nextProcurementItemId = state.procurementItemIdAt(nextIndex);
+                roomService.updateCurrentProcurementItem(
+                        source.roomCode(),
+                        nextProcurementItemId
+                );
+            }
+
+            state.decideItem(
+                    source.playerId(),
+                    accept,
+                    System.currentTimeMillis()
+            );
+        }
 
         if (state.getPhase() == GamePhase.VOTING) {
             broadcastRoomState(source.roomCode());

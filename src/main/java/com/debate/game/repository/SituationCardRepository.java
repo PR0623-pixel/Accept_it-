@@ -16,6 +16,11 @@ public interface SituationCardRepository extends JpaRepository<SituationCard, Lo
             Long roomId,
             DebateRole ownerRole
     );
+    List<SituationCard> findByRoom_IdAndProcurementItem_IdAndOwnerRoleAndIsUsedFalseOrderByIdAsc(
+            Long roomId,
+            Long procurementItemId,
+            DebateRole ownerRole
+    );
 
     @Modifying(clearAutomatically = true, flushAutomatically = true)
     @Query("""

@@ -34,6 +34,7 @@ public class RoomGameState {
     private final RoomStatePayload.RoomSettingsPayload settings;
     private final List<RoomStatePayload.ItemResultPayload> results = new ArrayList<>();
     private final List<RoomStatePayload.ItemPayload> items;
+    private final List<Long> procurementItemIds;
     private int currentItemIndex;
  
     private long nextEffectId = 1;
@@ -41,16 +42,20 @@ public class RoomGameState {
     public RoomGameState(
             String roomCode,
             List<RoomStatePayload.ItemPayload> items,
+            List<Long> procurementItemIds,
             RoomStatePayload.RoomSettingsPayload settings,
             List<PlayerState> initialPlayers
     ) {
-        if (items == null || items.isEmpty()) {
+        if (items == null || items.isEmpty()
+        || procurementItemIds == null
+        || procurementItemIds.size() != items.size()) {
             throw new IllegalArgumentException("게임을 시작할 물품이 없습니다.");
         }
 
         this.roomCode = roomCode;
         this.phase = GamePhase.VOTING;
         this.items = List.copyOf(items);
+        this.procurementItemIds = List.copyOf(procurementItemIds);
         this.currentItemIndex = 0;
         this.currentItem = this.items.get(currentItemIndex);
         this.settings = settings;
@@ -126,6 +131,13 @@ public class RoomGameState {
         }
 
         hands.put(playerId, new ArrayList<>(cards));
+    }
+
+    public synchronized Long procurementItemIdAt(int index) {
+        if (index < 0 || index >= procurementItemIds.size()) {
+            throw new IllegalArgumentException("물품 인덱스가 올바르지 않습니다.");
+        }
+        return procurementItemIds.get(index);
     }
 
     public synchronized CardPayload useCard(Long playerId, Long cardId) {
@@ -340,16 +352,9 @@ public class RoomGameState {
         }
     }
 
-    public synchronized void decideItem(
-        Long moderatorId,
-        boolean accept,
-        long now
-    ) {
+    public synchronized int validateItemDecisionAndGetNextIndex(Long moderatorId) {
         if (phase != GamePhase.MODERATOR_DECISION) {
-            throw new GameActionException(
-                    "INVALID",
-                    "사회자 결정 단계가 아닙니다."
-            );
+            throw new GameActionException("INVALID", "사회자 결정 단계가 아닙니다.");
         }
 
         PlayerState moderator = players.get(moderatorId);
@@ -368,11 +373,20 @@ public class RoomGameState {
         }
 
         if (currentItem == null) {
-            throw new GameActionException(
-                    "INVALID",
-                    "현재 결정할 물품이 없습니다."
-            );
+            throw new GameActionException("INVALID", "현재 결정할 물품이 없습니다.");
         }
+
+        return currentItemIndex + 1 < items.size()
+                ? currentItemIndex + 1
+                : -1;
+    }
+
+    public synchronized void decideItem(
+        Long moderatorId,
+        boolean accept,
+        long now
+    ) {
+        validateItemDecisionAndGetNextIndex(moderatorId);
 
         results.add(new RoomStatePayload.ItemResultPayload(
                 currentItem.name(),
