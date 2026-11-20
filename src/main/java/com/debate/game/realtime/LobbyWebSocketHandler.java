@@ -124,6 +124,7 @@ public class LobbyWebSocketHandler extends TextWebSocketHandler {
                 case "SEND_CHAT" -> sendChat(source, requiredText(payload, "text"));
                 case "REQUEST_REBUTTAL" -> requestRebuttal(source, requiredLong(payload, "cardId"));
                 case "DECIDE_REBUTTAL" -> decideRebuttal(source, requiredBoolean(payload, "approve"));
+                case "END_DEBATE" -> endDebate(source);
                 case "DECIDE_ITEM" -> decideItem(source, requiredBoolean(payload, "accept"));
                 default -> throw new IllegalArgumentException("현재 지원하지 않는 이벤트입니다.");
             }
@@ -241,6 +242,12 @@ public class LobbyWebSocketHandler extends TextWebSocketHandler {
         broadcastRoomState(source.roomCode());
     }
 
+    private void endDebate(ParticipantSocket source) {
+        RoomGameState state = gameState(source);
+        state.endDebate(source.playerId());
+        broadcastRoomState(source.roomCode());
+    }
+
     private void useCard(ParticipantSocket source, Long cardId) {
         RoomGameState state = gameStateStore.find(source.roomCode())
                 .orElseThrow(() -> new GameActionException(
@@ -273,6 +280,8 @@ public class LobbyWebSocketHandler extends TextWebSocketHandler {
                         source.roomCode(),
                         nextProcurementItemId
                 );
+            } else {
+                roomService.finishGame(source.roomCode());
             }
 
             state.decideItem(

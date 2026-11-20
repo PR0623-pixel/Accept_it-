@@ -190,6 +190,8 @@ export type ClientEvent =
    *  approve=true  → speech = { speakerId: requesterId, kind:'REBUTTAL', endsAt: now+60s }, lastSpeakerId=requesterId, effect=REBUTTAL_APPROVED
    *  approve=false → pendingRebuttal=null, effect=REBUTTAL_DENIED(targetId=requesterId)  ("묵살" 모션) */
   | { type: 'DECIDE_REBUTTAL'; payload: { approve: boolean } }
+  /** DEBATE에서 MODERATOR 만 사용할 수 있으며, 진행 중인 토론을 즉시 MODERATOR_DECISION으로 전환합니다. */
+  | { type: 'END_DEBATE'; payload: Record<string, never> }
   /** MODERATOR 만, phase===MODERATOR_DECISION 일 때만. results 에 추가 + effect=ITEM_ACCEPTED/REJECTED.
    *  currentItem.index < maxItems 이면 다음 물품(VOTING) / 아니면 phase=RESULT */
   | { type: 'DECIDE_ITEM'; payload: { accept: boolean } };

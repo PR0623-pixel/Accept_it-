@@ -114,6 +114,8 @@ export default function GamePage() {
               <small>{iSpeak ? '말씀하세요! 아래 입력창으로 의견을 보내세요.' : speakWhy || rebutWhy}</small>
             </>}
 
+            {debating && isMod && <button className="btn con" onClick={() => send({ type: 'END_DEBATE', payload: {} })}>토론 종료</button>}
+
             {debating && isMod && (pending
               ? <>
                   {/* [BACKEND] DECIDE_REBUTTAL: 사회자만. approve=true→반론자 발언권 1분 / false→묵살 연출(REBUTTAL_DENIED) */}

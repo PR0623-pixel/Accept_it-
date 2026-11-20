@@ -219,6 +219,40 @@ class LobbyWebSocketHandlerTest {
     }
 
     @Test
+    void moderatorEndsDebateAndMovesToItemDecision() {
+        RoomGameState state = gameState();
+        state.vote(11L, Stance.PRO, 1_000L);
+        state.vote(12L, Stance.CON, 1_000L);
+        assertEquals(com.debate.game.Ingame.enums.GamePhase.DEBATE, state.getPhase());
+
+        state.endDebate(13L);
+
+        assertEquals(com.debate.game.Ingame.enums.GamePhase.MODERATOR_DECISION, state.getPhase());
+        assertNull(state.getItemEndsAt());
+        assertNull(state.getSpeech());
+        assertNull(state.getPendingRebuttal());
+    }
+
+    @Test
+    void decideItemSyncsFinalStatusToDatabase() throws Exception {
+        RoomGameState state = gameState();
+        state.vote(11L, Stance.PRO, 1_000L);
+        state.vote(12L, Stance.PRO, 1_000L);
+        gameStates.save(state);
+
+        when(reader.read("ABC123")).thenReturn(lobby("ABC123", "13"));
+        WebSocketSession session = socket("moderator-final", "ABC123", "13");
+        handler.afterConnectionEstablished(session);
+
+        handler.handleTextMessage(session,
+                new TextMessage("{\"type\":\"DECIDE_ITEM\",\"payload\":{\"accept\":true}}"));
+
+        verify(rooms).finishGame("ABC123");
+        assertEquals(com.debate.game.Ingame.enums.GamePhase.RESULT, state.getPhase());
+        assertNull(state.getCurrentItem());
+    }
+
+    @Test
     void acceptsLobbyCommandsUsingConnectionIdentityNotClientPayloadId() throws Exception {
         when(reader.read("ABC123")).thenReturn(lobby("ABC123", "11"));
         WebSocketSession session = socket("a", "ABC123", "11");

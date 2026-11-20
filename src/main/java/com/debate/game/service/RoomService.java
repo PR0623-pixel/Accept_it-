@@ -583,6 +583,27 @@ public class RoomService {
         room.setCurrentTurnRole(null);
     }
 
+    @Transactional
+    public void finishGame(String roomCode) {
+        String code = roomCode == null
+                ? ""
+                : roomCode.strip().toUpperCase(Locale.ROOT);
+
+        if (!code.matches("[A-Z0-9]{6}")) {
+            throw new InvalidRoomCodeException("방을 찾을 수 없습니다.");
+        }
+
+        Room room = roomRepository.findByRoomCodeForUpdate(code)
+                .orElseThrow(() -> new InvalidRoomCodeException("방을 찾을 수 없습니다."));
+
+        if (room.getStatus() != RoomStatus.IN_PROGRESS) {
+            throw new IllegalStateException("현재 진행 중인 방이 아닙니다.");
+        }
+
+        room.setStatus(RoomStatus.FINISHED);
+        room.setCurrentTurnRole(null);
+    }
+
     @Transactional(readOnly = true)
     public Map<Long, List<CardPayload>> dealCardsForGuests(
             String roomCode,

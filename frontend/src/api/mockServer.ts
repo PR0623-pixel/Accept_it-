@@ -303,6 +303,15 @@ class MockServer {
         }
         break;
       }
+      case 'END_DEBATE': {
+        if (me.role !== 'MODERATOR' || r.phase !== 'DEBATE') return this.fail('INVALID', '지금은 토론을 종료할 수 없습니다.');
+        r.phase = 'MODERATOR_DECISION';
+        r.speech = null;
+        r.pendingRebuttal = null;
+        r.itemEndsAt = null;
+        this.say('사회자가 토론을 종료했습니다. 물품의 입건 여부를 결정합니다.');
+        break;
+      }
       case 'DECIDE_ITEM': {
         if (me.role !== 'MODERATOR' || r.phase !== 'MODERATOR_DECISION') return this.fail('INVALID', '지금은 결정할 수 없습니다.');
         const { accept } = ev.payload, item = r.currentItem!;
