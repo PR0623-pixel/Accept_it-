@@ -13,6 +13,7 @@ import com.debate.game.validation.NicknameValidator;
 import com.debate.game.validation.RoomSettingsPolicy;
 import com.debate.game.dto.RoomEnterResponse;
 import com.debate.game.dto.RoomSettingsUpdateRequest;
+import com.debate.game.dto.websocket.CardPayload;
 import com.debate.game.exception.NotHostException;
 import com.debate.game.entity.Player;
 import com.debate.game.entity.ProcurementItem;
@@ -28,6 +29,7 @@ import com.debate.game.Ingame.GameStartedEvent;
 import com.debate.game.Ingame.RoomGameState;
 import com.debate.game.entity.SituationCard;
 import com.debate.game.entity.enums.DebateRole;
+import com.debate.game.entity.enums.Stance;
 import com.debate.game.repository.SituationCardRepository;
 
 import com.debate.game.dto.websocket.RoomStatePayload;
@@ -39,7 +41,10 @@ import org.springframework.stereotype.Service;
 import org.springframework.transaction.annotation.Transactional;
 
 import java.util.Locale;
+import java.util.ArrayList;
 import java.util.List;
+import java.util.LinkedHashMap;
+import java.util.Map;
 import java.util.Objects;
 import java.util.Optional;
 
@@ -488,10 +493,30 @@ public class RoomService {
             throw new IllegalStateException("시작할 수 있는 물품이 없습니다.");
         }
 
-        ProcurementItem firstItem =
-                catalog.get(java.util.concurrent.ThreadLocalRandom.current()
-                        .nextInt(catalog.size()));
+        // 카탈로그에서 설정된 개수만큼 중복 없이 무작위 선택
+        List<ProcurementItem> shuffledItems = new java.util.ArrayList<>(catalog);
+        java.util.Collections.shuffle(shuffledItems);
 
+        int itemCount = Math.min(room.getMaxItems(), shuffledItems.size());
+        List<ProcurementItem> selectedItems =
+                new java.util.ArrayList<>(shuffledItems.subList(0, itemCount));
+
+        ProcurementItem firstItem = selectedItems.get(0);
+        createInitialSituationCards(room, firstItem);
+        // RoomGameState가 사용할 전체 물품 목록
+        List<RoomStatePayload.ItemPayload> gameItems = new java.util.ArrayList<>();
+        
+        for (int i = 0; i < selectedItems.size(); i++) {
+            ProcurementItem item = selectedItems.get(i);
+            
+            gameItems.add(new RoomStatePayload.ItemPayload(
+                    i + 1,
+                    item.getItemName(),
+                    item.getDescription()
+            ));
+        }
+
+        // 첫 물품의 상황 카드 생성
         createInitialSituationCards(room, firstItem);
 
         room.setCurrentProcurementItem(firstItem);
@@ -517,24 +542,81 @@ public class RoomService {
                 .toList();
 
         RoomGameState gameState = new RoomGameState(
-            room.getRoomCode(),
-            new RoomStatePayload.ItemPayload(
-                    1,
-                    firstItem.getItemName(),
-                    firstItem.getDescription()
+                room.getRoomCode(),
+                gameItems,
+                new RoomStatePayload.RoomSettingsPayload(
+                        room.getMaxItems(),
+                        room.getTurnTimeLimit() * 60,
+                        room.getMaxCardCount()
                 ),
-            new RoomStatePayload.RoomSettingsPayload(
-                    room.getMaxItems(),
-                    room.getTurnTimeLimit() * 60,
-                    room.getMaxCardCount()
-                ),
-            gamePlayers
+                gamePlayers
         );
 
         // DB 트랜잭션이 커밋된 경우에만 AFTER_COMMIT listener가 Store에 넣습니다.
         if (lobbyEventPublisher != null) {
             lobbyEventPublisher.publishEvent(new GameStartedEvent(gameState));
         }
+    }
+
+    @Transactional(readOnly = true)
+    public Map<Long, List<CardPayload>> dealCardsForGuests(
+            String roomCode,
+            Map<Long, Stance> guestStances
+    ) {
+        String code = roomCode == null
+                ? ""
+                : roomCode.strip().toUpperCase(Locale.ROOT);
+
+        if (!code.matches("[A-Z0-9]{6}")) {
+            throw new InvalidRoomCodeException("방을 찾을 수 없습니다.");
+        }
+        if (situationCardRepository == null) {
+            throw new IllegalStateException("상황 카드 저장소가 설정되지 않았습니다.");
+        }
+
+        Room room = roomRepository.findByRoomCode(code)
+                .orElseThrow(() -> new InvalidRoomCodeException("방을 찾을 수 없습니다."));
+
+        int cardsPerGuest = room.getMaxCardCount();
+        Map<Long, List<CardPayload>> handsByPlayer = new LinkedHashMap<>();
+
+        for (Map.Entry<Long, Stance> entry : guestStances.entrySet()) {
+            Long playerId = entry.getKey();
+            Stance stance = entry.getValue();
+
+            if (playerId == null || stance == null) {
+                throw new IllegalArgumentException("객원의 진영 정보가 올바르지 않습니다.");
+            }
+
+            DebateRole side = DebateRole.valueOf(stance.name());
+            List<SituationCard> available =
+                    situationCardRepository
+                            .findByRoom_IdAndOwnerRoleAndIsUsedFalseOrderByIdAsc(
+                                    room.getId(),
+                                    side
+                            );
+
+            if (available.size() < cardsPerGuest) {
+                throw new IllegalStateException(
+                        stance + " 진영에 지급할 카드가 부족합니다."
+                );
+            }
+
+            List<CardPayload> hand = new ArrayList<>();
+            for (SituationCard card : available.subList(0, cardsPerGuest)) {
+                hand.add(new CardPayload(
+                        card.getId(),
+                        card.getKeyword(),
+                        card.getKeyword() + " 카드",
+                        card.getContent(),
+                        false
+                ));
+            }
+
+            handsByPlayer.put(playerId, hand);
+        }
+
+        return handsByPlayer;
     }
 
     private Room lockWaitingRoom(String roomCode) {

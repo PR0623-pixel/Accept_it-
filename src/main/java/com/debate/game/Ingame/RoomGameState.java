@@ -33,24 +33,33 @@ public class RoomGameState {
     private RoomStatePayload.EffectPayload effect;
     private final RoomStatePayload.RoomSettingsPayload settings;
     private final List<RoomStatePayload.ItemResultPayload> results = new ArrayList<>();
-    // private final List<RoomStatePayload.ItemPayload> items;
+    private final List<RoomStatePayload.ItemPayload> items;
+    private int currentItemIndex;
  
     private long nextEffectId = 1;
 
     public RoomGameState(
             String roomCode,
-            RoomStatePayload.ItemPayload firstItem,
+            List<RoomStatePayload.ItemPayload> items,
             RoomStatePayload.RoomSettingsPayload settings,
             List<PlayerState> initialPlayers
     ) {
+        if (items == null || items.isEmpty()) {
+            throw new IllegalArgumentException("게임을 시작할 물품이 없습니다.");
+        }
+
         this.roomCode = roomCode;
         this.phase = GamePhase.VOTING;
-        this.currentItem = firstItem;
+        this.items = List.copyOf(items);
+        this.currentItemIndex = 0;
+        this.currentItem = this.items.get(currentItemIndex);
         this.settings = settings;
+
         for (PlayerState player : initialPlayers) {
             players.put(player.getId(), player);
             hands.put(player.getId(), new ArrayList<>());
         }
+
     }
 
     public long nextEffectId() {
@@ -376,15 +385,41 @@ public class RoomGameState {
                 null
         );
 
-        /*
-        * 현재 RoomGameState에는 다음 물품 목록이 없으므로
-        * 우선 마지막 결과 단계로 전환합니다.
-        */
-        phase = GamePhase.RESULT;
-        itemEndsAt = null;
-        speech = null;
-        pendingRebuttal = null;
-        pendingRebuttalCardId = null;
+        if (currentItemIndex + 1 < items.size()) {
+            // 다음 물품이 남아 있음
+            currentItemIndex++;
+            currentItem = items.get(currentItemIndex);
+
+            phase = GamePhase.VOTING;
+            itemEndsAt = null;
+            speech = null;
+            lastSpeakerId = null;
+            pendingRebuttal = null;
+            pendingRebuttalCardId = null;
+
+            chatHistory.clear();
+            for (List<CardPayload> hand : hands.values()) {
+                hand.clear();
+            }
+
+            for (PlayerState player : players.values()) {
+                player.setStance(null);
+                player.setHasVoted(false);
+            }
+        } else {
+            // 모든 물품을 결정했음
+            phase = GamePhase.RESULT;
+            currentItem = null;
+            itemEndsAt = null;
+            speech = null;
+            lastSpeakerId = null;
+            pendingRebuttal = null;
+            pendingRebuttalCardId = null;
+            chatHistory.clear();
+            for (List<CardPayload> hand : hands.values()) {
+                hand.clear();
+            }
+        }
     }
 
 
@@ -399,7 +434,13 @@ public class RoomGameState {
         private boolean hasVoted;
         private boolean isHost;
 
-        public PlayerState(Long id, String nickname, LobbyRole role, boolean ready, boolean isHost) {
+        public PlayerState(
+        Long id,
+        String nickname,
+        LobbyRole role,
+        boolean ready,
+        boolean isHost
+        ) {
             this.id = id;
             this.nickname = nickname;
             this.role = role;

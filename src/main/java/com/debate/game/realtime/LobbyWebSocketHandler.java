@@ -2,10 +2,15 @@ package com.debate.game.realtime;
 
 import com.debate.game.Ingame.RoomGameState;
 import com.debate.game.Ingame.RoomGameStateStore;
+import com.debate.game.Ingame.enums.GamePhase;
 import com.debate.game.dto.LobbySnapshotResponse;
+import com.debate.game.dto.websocket.CardPayload;
+import com.debate.game.entity.enums.DebateRole;
+import com.debate.game.entity.enums.LobbyRole;
 import com.debate.game.entity.enums.Stance;
 import com.debate.game.exception.*;
 import com.debate.game.service.RoomService;
+import com.debate.game.service.SituationCardService;
 import com.debate.game.websocket.GameActionException;
 import com.fasterxml.jackson.databind.JsonNode;
 import com.fasterxml.jackson.databind.ObjectMapper;
@@ -19,6 +24,7 @@ import org.springframework.web.util.UriComponentsBuilder;
 
 import java.io.IOException;
 import java.net.URI;
+import java.util.LinkedHashMap;
 import java.util.List;
 import java.util.Locale;
 import java.util.Map;
@@ -37,6 +43,7 @@ public class LobbyWebSocketHandler extends TextWebSocketHandler {
     private final RoomGameStateStore gameStateStore;
     private final ObjectMapper mapper;
     private final ConcurrentMap<String, ParticipantSocket> connections = new ConcurrentHashMap<>();
+    private final SituationCardService situationCardService;
 
     private record ParticipantSocket(String roomCode, Long playerId, WebSocketSession socket) {}
     private record Envelope(String type, Object payload) {}
@@ -134,8 +141,43 @@ public class LobbyWebSocketHandler extends TextWebSocketHandler {
         }
         RoomGameState state = gameStateStore.find(source.roomCode())
                 .orElseThrow(() -> new GameActionException("INVALID", "진행 중인 게임 상태를 찾을 수 없습니다."));
-        state.vote(source.playerId(), stance, System.currentTimeMillis());
-        broadcastRoomState(source.roomCode());
+        
+        synchronized (state) {
+            GamePhase previousPhase = state.getPhase();
+
+            GamePhase currentPhase =
+                    state.vote(source.playerId(), stance, System.currentTimeMillis());
+
+            // 두 객원의 진영이 갈려 DEBATE가 시작된 경우에만 손패를 지급합니다.
+            if (previousPhase == GamePhase.VOTING
+                    && currentPhase == GamePhase.DEBATE) {
+                Map<Long, Stance> guestStances = new LinkedHashMap<>();
+
+                for (RoomGameState.PlayerState player : state.getPlayers().values()) {
+                    if (player.getRole() == LobbyRole.GUEST) {
+                        guestStances.put(player.getId(), player.getStance());
+                    }
+                }
+
+                Map<Long, List<CardPayload>> hands =
+                        roomService.dealCardsForGuests(source.roomCode(), guestStances);
+
+                hands.forEach(state::giveCards);
+
+                // 손패는 수신자 본인에게만 전달합니다.
+                for (ParticipantSocket connection : connections.values()) {
+                    if (source.roomCode().equals(connection.roomCode())) {
+                        sendQuietly(
+                                connection.socket(),
+                                "HAND",
+                                state.handFor(connection.playerId())
+                        );
+                    }
+                }
+            }
+        }
+
+    broadcastRoomState(source.roomCode());
     }
 
     private RoomGameState gameState(ParticipantSocket source) {
@@ -147,7 +189,28 @@ public class LobbyWebSocketHandler extends TextWebSocketHandler {
     }
 
     private void startSpeech(ParticipantSocket source, Long cardId) {
-        gameState(source).startSpeech(source.playerId(), cardId, System.currentTimeMillis());
+        RoomGameState state = gameStateStore.find(source.roomCode())
+                .orElseThrow(() -> new GameActionException("INVALID", "진행 중인 게임 상태를 찾을 수 없습니다."));
+
+        RoomGameState.PlayerState player = state.getPlayers().get(source.playerId());
+        if(player == null || player.getStance() == null){
+            throw new GameActionException("INVALID", "진영을 선택한 객원만 발언할 수 있습니다.");
+        }
+
+        state.handFor(source.playerId()).stream()
+                .filter(c -> c.cardId() == cardId)
+                .findFirst()
+                .orElseThrow(() -> new GameActionException("CARD_REQUIRED", "본인 손패에 있는 카드를 선택해야 합니다."));
+
+        situationCardService.markUsed(
+                source.roomCode(),
+                cardId,
+                DebateRole.valueOf(player.getStance().name())
+        );
+
+        state.startSpeech(source.playerId(), cardId, System.currentTimeMillis());
+
+        sendQuietly(source.socket(), "HAND", state.handFor(source.playerId()));
         broadcastRoomState(source.roomCode());
     }
 
@@ -165,7 +228,8 @@ public class LobbyWebSocketHandler extends TextWebSocketHandler {
         }
     }
     private void requestRebuttal(ParticipantSocket source, Long cardId) {
-        RoomGameState state = gameState(source);
+        RoomGameState state = gameStateStore.find(source.roomCode()).orElseThrow(() -> new GameActionException(
+            "INVALID", "진행 중인 게임 상태를 찾을 수 없습니다."));
         state.requestRebuttal(source.playerId(), cardId, System.currentTimeMillis());
         sendQuietly(source.socket(), "HAND", state.handFor(source.playerId()));
         broadcastRoomState(source.roomCode());
@@ -206,7 +270,21 @@ public class LobbyWebSocketHandler extends TextWebSocketHandler {
                 System.currentTimeMillis()
         );
 
-        broadcastRoomState(source.roomCode());
+        if (state.getPhase() == GamePhase.VOTING) {
+            broadcastRoomState(source.roomCode());
+
+            for (ParticipantSocket connection : connections.values()) {
+                if (!source.roomCode().equals(connection.roomCode())) {
+                    continue;
+                }
+
+                sendQuietly(connection.socket(), "HAND",
+                        state.handFor(connection.playerId()));
+                sendQuietly(connection.socket(), "CHAT_HISTORY", List.of());
+            }
+        } else {
+            broadcastRoomState(source.roomCode());
+        }
     }
 
     private static String requiredText(JsonNode node, String name) {

@@ -6,11 +6,13 @@ import com.debate.game.dto.LobbySnapshotResponse;
 import com.debate.game.entity.enums.LobbyRole;
 import com.debate.game.entity.enums.Stance;
 import com.debate.game.service.RoomService;
+import com.debate.game.service.SituationCardService;
 import com.fasterxml.jackson.databind.JsonNode;
 import com.fasterxml.jackson.databind.ObjectMapper;
 import org.junit.jupiter.api.Test;
 import org.springframework.web.socket.TextMessage;
 import org.springframework.web.socket.WebSocketSession;
+
 
 import java.net.URI;
 import java.util.List;
@@ -24,9 +26,17 @@ class LobbyWebSocketHandlerTest {
     LobbyStateReader reader = mock(LobbyStateReader.class);
     RoomGameStateStore gameStates = new RoomGameStateStore();
     ObjectMapper json = new ObjectMapper();
-    LobbyWebSocketHandler handler = new LobbyWebSocketHandler(
-            rooms, reader, new LobbyRoomStateMapper(), new IngameRoomStateMapper(), gameStates, json);
+    SituationCardService situationCards = mock(SituationCardService.class);
 
+    LobbyWebSocketHandler handler = new LobbyWebSocketHandler(
+            rooms,
+            reader,
+            new LobbyRoomStateMapper(),
+            new IngameRoomStateMapper(),
+            gameStates,
+            json,
+            situationCards
+    );
     LobbySnapshotResponse lobby(String code, String playerId) {
         return new LobbySnapshotResponse(code, playerId, "LOBBY",
                 List.of(new LobbySnapshotResponse.LobbyPlayer(playerId, "참가자", "GUEST", true, true)),
@@ -55,7 +65,8 @@ class LobbyWebSocketHandlerTest {
 
     private RoomGameState gameState() {
         return new RoomGameState("ABC123",
-                new com.debate.game.dto.websocket.RoomStatePayload.ItemPayload(1, "물품", "설명"),
+                java.util.List.of(
+                    new com.debate.game.dto.websocket.RoomStatePayload.ItemPayload(1, "물품", "설명")),
                 new com.debate.game.dto.websocket.RoomStatePayload.RoomSettingsPayload(3, 300, 3),
                 List.of(
                         new RoomGameState.PlayerState(11L, "객원1", LobbyRole.GUEST, true, true),
