@@ -32,8 +32,12 @@ class RoomGameStateTimerTest {
         RoomGameState state = votingState(1);
         state.vote(11L, Stance.PRO, 1_000L);
         state.vote(12L, Stance.CON, 1_000L);
-        state.giveCards(11L, List.of(new CardPayload(1L, "A", "A", "A", false)));
-        state.giveCards(12L, List.of(new CardPayload(2L, "B", "B", "B", false)));
+        state.giveCards(11L, List.of(
+                new CardPayload(1L, "A", "A", "A", false),
+                new CardPayload(3L, "A2", "A2", "A2", false)));
+        state.giveCards(12L, List.of(
+                new CardPayload(2L, "B", "B", "B", false),
+                new CardPayload(4L, "B2", "B2", "B2", false)));
         return state;
     }
 

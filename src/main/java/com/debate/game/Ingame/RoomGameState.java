@@ -192,6 +192,57 @@ public class RoomGameState {
         return hand.get(index);
     }
 
+    /**
+     * A side is exhausted when its guest has no unused cards in the current
+     * item's hand. Only evaluate a fully dealt PRO-vs-CON debate: a temporary
+     * empty hand during the voting/dealing sequence is not card exhaustion.
+     *
+     * Card contents and allocation come from the DB; this check never creates
+     * or carries cards across items.
+     */
+    public synchronized boolean hasExhaustedSide() {
+        if (phase != GamePhase.DEBATE) {
+            return false;
+        }
+        boolean proPresent = false;
+        boolean conPresent = false;
+        boolean proExhausted = false;
+        boolean conExhausted = false;
+        for (PlayerState player : players.values()) {
+            if (player.getRole() != LobbyRole.GUEST || player.getStance() == null) {
+                continue;
+            }
+            List<CardPayload> hand = hands.get(player.getId());
+            // The deal is complete only when both opposing guests have hands.
+            if (hand == null || hand.isEmpty()) {
+                return false;
+            }
+            boolean exhausted = hand.stream().noneMatch(card -> !card.used());
+            if (player.getStance() == Stance.PRO) {
+                if (proPresent) return false;
+                proPresent = true;
+                proExhausted = exhausted;
+            } else {
+                if (conPresent) return false;
+                conPresent = true;
+                conExhausted = exhausted;
+            }
+        }
+        return proPresent && conPresent && (proExhausted || conExhausted);
+    }
+
+    /**
+     * Resolve card exhaustion only after the current floor and any pending
+     * rebuttal have been settled. Return true only for an actual transition.
+     * The S02 item deadline remains higher priority in expireTimers().
+     */
+    public synchronized boolean finishDebateIfCardsExhausted() {
+        if (speech != null || pendingRebuttal != null || !hasExhaustedSide()) {
+            return false;
+        }
+        return finishDebateIfActive();
+    }
+
     /** Validate the room deadline before any persistent card mutation. */
     public synchronized void requireDebateOpenAt(long now) {
         if (phase != GamePhase.DEBATE) {
@@ -234,11 +285,13 @@ public class RoomGameState {
     return speech;
 }
 
-    public synchronized void endSpeech(Long playerId) {
+    /** @return true when finishing this speech also finishes the debate. */
+    public synchronized boolean endSpeech(Long playerId) {
         if (speech == null || !playerId.toString().equals(speech.speakerId())) {
             throw new GameActionException("NOT_YOUR_TURN", "현재 발언권을 가진 사람만 종료할 수 있습니다.");
         }
         speech = null;
+        return finishDebateIfCardsExhausted();
     }
 
     /**
@@ -259,9 +312,13 @@ public class RoomGameState {
         }
         if (speech != null && now >= speech.endsAt()) {
             speech = null;
-            return TimerOutcome.SPEECH_EXPIRED;
+            return finishDebateIfCardsExhausted()
+                    ? TimerOutcome.DEBATE_FINISHED : TimerOutcome.SPEECH_EXPIRED;
         }
-        return TimerOutcome.NONE;
+        // Also catch card use performed by any other server-side action while
+        // the floor is idle. This does not interfere with a pending rebuttal.
+        return finishDebateIfCardsExhausted()
+                ? TimerOutcome.DEBATE_FINISHED : TimerOutcome.NONE;
     }
 
     /**
@@ -285,8 +342,8 @@ public class RoomGameState {
 
     /**
      * Single DEBATE -> MODERATOR_DECISION transition for every termination source.
-     * S02 (deadline) and S03 (card exhaustion) must validate their trigger
-     * before calling this method. Does not implement a timer/card detector.
+     * Callers (manual action, S02 timer, S03 card exhaustion) validate their
+     * own trigger before invoking this idempotent cleanup operation.
      *
      * @return true only for the first successful transition
      */
@@ -384,7 +441,8 @@ public class RoomGameState {
         return pendingRebuttal;
     }
 
-    public synchronized void decideRebuttal(
+    /** @return true when resolving the rebuttal also finishes the debate. */
+    public synchronized boolean decideRebuttal(
             Long moderatorId,
             boolean approve,
             long now
@@ -429,8 +487,9 @@ public class RoomGameState {
 
         pendingRebuttal = null;
         pendingRebuttalCardId = null;
+        return finishDebateIfCardsExhausted();
     }
-    
+
     public synchronized void restoreCard(Long playerId, Long cardId) {
         if (playerId == null || cardId == null) {
             return;

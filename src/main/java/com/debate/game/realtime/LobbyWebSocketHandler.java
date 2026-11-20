@@ -191,11 +191,11 @@ public class LobbyWebSocketHandler extends TextWebSocketHandler {
 
     private void startSpeech(ParticipantSocket source, Long cardId) {
         RoomGameState state = gameState(source);
-        long now = System.currentTimeMillis();
-
         // Take the same monitor as the timer before touching the database.
-        // A request arriving after itemEndsAt must not mark a DB card as used.
+        // Evaluate the clock after acquiring it so a queued request cannot
+        // mark a card used after the item's deadline.
         synchronized (state) {
+            long now = System.currentTimeMillis();
             state.requireDebateOpenAt(now);
             RoomGameState.PlayerState player = state.getPlayers().get(source.playerId());
             if (player == null || player.getStance() == null) {
@@ -211,15 +211,20 @@ public class LobbyWebSocketHandler extends TextWebSocketHandler {
                     source.roomCode(), cardId,
                     DebateRole.valueOf(player.getStance().name()));
             state.startSpeech(source.playerId(), cardId, now);
+            sendQuietly(source.socket(), "HAND", state.handFor(source.playerId()));
+            broadcastRoomState(source.roomCode());
         }
-
-        sendQuietly(source.socket(), "HAND", state.handFor(source.playerId()));
-        broadcastRoomState(source.roomCode());
     }
 
     private void endSpeech(ParticipantSocket source) {
-        gameState(source).endSpeech(source.playerId());
-        broadcastRoomState(source.roomCode());
+        RoomGameState state = gameState(source);
+        synchronized (state) {
+            if (state.endSpeech(source.playerId())) {
+                broadcastDebateFinished(source.roomCode());
+            } else {
+                broadcastRoomState(source.roomCode());
+            }
+        }
     }
 
     private void sendChat(ParticipantSocket source, String text) {
@@ -231,23 +236,45 @@ public class LobbyWebSocketHandler extends TextWebSocketHandler {
         }
     }
     private void requestRebuttal(ParticipantSocket source, Long cardId) {
-        RoomGameState state = gameStateStore.find(source.roomCode()).orElseThrow(() -> new GameActionException(
-            "INVALID", "진행 중인 게임 상태를 찾을 수 없습니다."));
-        state.requestRebuttal(source.playerId(), cardId, System.currentTimeMillis());
-        sendQuietly(source.socket(), "HAND", state.handFor(source.playerId()));
-        broadcastRoomState(source.roomCode());
+        RoomGameState state = gameState(source);
+        synchronized (state) {
+            state.requestRebuttal(source.playerId(), cardId, System.currentTimeMillis());
+            sendQuietly(source.socket(), "HAND", state.handFor(source.playerId()));
+            broadcastRoomState(source.roomCode());
+        }
     }
 
     private void decideRebuttal(ParticipantSocket source, boolean approve) {
         RoomGameState state = gameState(source);
-        state.decideRebuttal(source.playerId(), approve, System.currentTimeMillis());
-        broadcastRoomState(source.roomCode());
+        synchronized (state) {
+            // Remember the requester before clearing the pending rebuttal.
+            var pending = state.getPendingRebuttal();
+            boolean finished = state.decideRebuttal(source.playerId(), approve, System.currentTimeMillis());
+            if (finished) {
+                broadcastDebateFinished(source.roomCode());
+                return;
+            }
+            // A denied rebuttal restores a reserved card. Only its owner may
+            // receive the refreshed HAND; other guests must not see it.
+            if (!approve && pending != null) {
+                Long requesterId = Long.valueOf(pending.requesterId());
+                for (ParticipantSocket connection : connections.values()) {
+                    if (source.roomCode().equals(connection.roomCode())
+                            && requesterId.equals(connection.playerId())) {
+                        sendQuietly(connection.socket(), "HAND", state.handFor(requesterId));
+                    }
+                }
+            }
+            broadcastRoomState(source.roomCode());
+        }
     }
 
     private void endDebate(ParticipantSocket source) {
         RoomGameState state = gameState(source);
-        if (state.endDebate(source.playerId())) {
-            broadcastDebateFinished(source.roomCode());
+        synchronized (state) {
+            if (state.endDebate(source.playerId())) {
+                broadcastDebateFinished(source.roomCode());
+            }
         }
     }
 
