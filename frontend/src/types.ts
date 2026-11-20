@@ -160,9 +160,10 @@ export type ClientEvent =
   | { type: 'UPDATE_SETTINGS'; payload: RoomSettings }
   /** LOBBY 에서만. MODERATOR 는 1자리, GUEST 는 2자리. 가득 차면 ROLE_FULL. 역할을 바꾸면 ready 해제 */
   | { type: 'SET_ROLE'; payload: { role: Role } }
-  /** LOBBY 에서만. ready=true 는 역할이 NONE 이면 ROLE_REQUIRED, 인원이 3명 미만이면 NOT_ENOUGH_PLAYERS.
-   *  3명 전원 ready → 서버가 AI로 물품 생성 → 카드 지급 → phase=VOTING 으로 전환 (게임 시작) */
+  /** Ready 상태만 변경, 전원 Ready여도 자동 시작하지 않음. */
   | { type: 'SET_READY'; payload: { ready: boolean } }
+  /** Host만 요청 가능. 서버가 인원·역할·전원 Ready 조건을 검증합니다. */
+  | { type: 'START_GAME'; payload: Record<string, never> }
   /** VOTING 에서 GUEST 만, 1회만(ALREADY_VOTED). 두 객원이 모두 선택하면:
    *    같은 의견 → 즉시 MODERATOR_DECISION (규칙 2-1)
    *    다른 의견 → DEBATE 시작, itemEndsAt = now + itemSeconds */
@@ -189,6 +190,8 @@ export type ClientEvent =
    *  approve=true  → speech = { speakerId: requesterId, kind:'REBUTTAL', endsAt: now+60s }, lastSpeakerId=requesterId, effect=REBUTTAL_APPROVED
    *  approve=false → pendingRebuttal=null, effect=REBUTTAL_DENIED(targetId=requesterId)  ("묵살" 모션) */
   | { type: 'DECIDE_REBUTTAL'; payload: { approve: boolean } }
+  /** DEBATE에서 MODERATOR 만 사용할 수 있으며, 진행 중인 토론을 즉시 MODERATOR_DECISION으로 전환합니다. */
+  | { type: 'END_DEBATE'; payload: Record<string, never> }
   /** MODERATOR 만, phase===MODERATOR_DECISION 일 때만. results 에 추가 + effect=ITEM_ACCEPTED/REJECTED.
    *  currentItem.index < maxItems 이면 다음 물품(VOTING) / 아니면 phase=RESULT */
   | { type: 'DECIDE_ITEM'; payload: { accept: boolean } };

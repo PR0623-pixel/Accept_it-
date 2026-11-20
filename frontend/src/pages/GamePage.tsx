@@ -114,12 +114,16 @@ export default function GamePage() {
               <small>{iSpeak ? '말씀하세요! 아래 입력창으로 의견을 보내세요.' : speakWhy || rebutWhy}</small>
             </>}
 
+            {debating && isMod && <button className="btn con" onClick={() => send({ type: 'END_DEBATE', payload: {} })}>토론 종료</button>}
+
             {debating && isMod && (pending
               ? <>
                   {/* [BACKEND] DECIDE_REBUTTAL: 사회자만. approve=true→반론자 발언권 1분 / false→묵살 연출(REBUTTAL_DENIED) */}
                   <b>{room.players.find((p) => p.id === pending.requesterId)?.nickname}님의 반론 요청 [{pending.keyword}]</b>
-                  <button className="btn pro" onClick={() => send({ type: 'DECIDE_REBUTTAL', payload: { approve: true } })}>반론 승인</button>
-                  <button className="btn con" onClick={() => send({ type: 'DECIDE_REBUTTAL', payload: { approve: false } })}>반론 묵살</button>
+                  <div className="rebuttal-actions">
+                    <button className="btn pro" onClick={() => send({ type: 'DECIDE_REBUTTAL', payload: { approve: true } })}>반론 승인</button>
+                    <button className="btn con" onClick={() => send({ type: 'DECIDE_REBUTTAL', payload: { approve: false } })}>반론 묵살</button>
+                  </div>
                 </>
               : <small>토론을 지켜보는 중... 반론 요청이 오면 여기서 승인/묵살을 결정합니다.</small>)}
 

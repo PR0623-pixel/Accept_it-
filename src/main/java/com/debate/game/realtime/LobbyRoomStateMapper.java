@@ -41,7 +41,12 @@ public class LobbyRoomStateMapper {
                 "maxItems", snapshot.settings().maxItems(),
                 "itemSeconds", snapshot.settings().itemSeconds(),
                 "cardsPerItem", snapshot.settings().cardsPerItem()));
-        state.put("currentItem", null);
+        var item = snapshot.currentItem();
+        state.put("currentItem", item == null ? null : Map.of(
+                    "index", item.index(),
+                    "name", item.name(),
+                    "description", item.description()
+        ));
         state.put("itemEndsAt", null);
         state.put("speech", null);
         state.put("lastSpeakerId", null);
