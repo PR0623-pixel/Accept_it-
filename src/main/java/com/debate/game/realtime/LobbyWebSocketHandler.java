@@ -244,8 +244,22 @@ public class LobbyWebSocketHandler extends TextWebSocketHandler {
 
     private void endDebate(ParticipantSocket source) {
         RoomGameState state = gameState(source);
-        state.endDebate(source.playerId());
-        broadcastRoomState(source.roomCode());
+        if (state.endDebate(source.playerId())) {
+            broadcastDebateFinished(source.roomCode());
+        }
+    }
+
+    /** Sends one new room snapshot plus each recipient's own hand after a debate ends. */
+    public void broadcastDebateFinished(String roomCode) {
+        RoomGameState state = gameStateStore.find(roomCode).orElse(null);
+        if (state == null) return;
+
+        broadcastRoomState(roomCode);
+        for (ParticipantSocket connection : connections.values()) {
+            if (roomCode.equals(connection.roomCode())) {
+                sendQuietly(connection.socket(), "HAND", state.handFor(connection.playerId()));
+            }
+        }
     }
 
     private void useCard(ParticipantSocket source, Long cardId) {

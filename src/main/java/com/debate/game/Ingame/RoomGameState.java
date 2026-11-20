@@ -210,17 +210,41 @@ public class RoomGameState {
         speech = null;
     }
 
-    public synchronized void endDebate(Long moderatorId) {
-        if (phase != GamePhase.DEBATE) {
-            throw new GameActionException("INVALID", "토론 중에만 종료할 수 있습니다.");
-        }
-
+    /**
+     * Manual moderator action. Returns false on an already-completed debate so
+     * duplicate END_DEBATE frames do not emit duplicate state changes.
+     */
+    public synchronized boolean endDebate(Long moderatorId) {
         PlayerState moderator = players.get(moderatorId);
         if (moderator == null) {
             throw new GameActionException("PLAYER_NOT_IN_ROOM", "방의 참가자가 아닙니다.");
         }
         if (moderator.getRole() != LobbyRole.MODERATOR) {
             throw new GameActionException("INVALID", "사회자만 토론을 종료할 수 있습니다.");
+        }
+        if (phase != GamePhase.DEBATE && phase != GamePhase.MODERATOR_DECISION) {
+            throw new GameActionException("INVALID", "토론 중에만 종료할 수 있습니다.");
+        }
+
+        return finishDebateIfActive();
+    }
+
+    /**
+     * Single DEBATE -> MODERATOR_DECISION transition for every termination source.
+     * S02 (deadline) and S03 (card exhaustion) must validate their trigger
+     * before calling this method. Does not implement a timer/card detector.
+     *
+     * @return true only for the first successful transition
+     */
+    public synchronized boolean finishDebateIfActive() {
+        if (phase != GamePhase.DEBATE) {
+            return false;
+        }
+
+        // A pending rebuttal has not been approved. Cancel it and return its
+        // reserved card before discarding the pending request.
+        if (pendingRebuttal != null && pendingRebuttalCardId != null) {
+            restoreCard(Long.valueOf(pendingRebuttal.requesterId()), pendingRebuttalCardId);
         }
 
         phase = GamePhase.MODERATOR_DECISION;
@@ -229,6 +253,7 @@ public class RoomGameState {
         lastSpeakerId = null;
         pendingRebuttal = null;
         pendingRebuttalCardId = null;
+        return true;
     }
 
     public synchronized ChatMessagePayload sendChat(Long playerId, String rawText, long now) {
