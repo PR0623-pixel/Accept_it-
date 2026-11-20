@@ -8,6 +8,7 @@ import com.debate.game.dto.websocket.RoomStatePayload.PendingRebuttalPayload;
 import com.debate.game.entity.enums.LobbyRole;
 import com.debate.game.entity.enums.Stance;
 import com.debate.game.websocket.GameActionException;
+import com.debate.game.validation.RoomSettingsPolicy;
 import lombok.Getter;
 import lombok.Setter;
 
@@ -36,6 +37,8 @@ public class RoomGameState {
     private final List<RoomStatePayload.ItemPayload> items;
     private final List<Long> procurementItemIds;
     private int currentItemIndex;
+    private final int speechSeconds;
+    private final int rebuttalSeconds;
  
     private long nextEffectId = 1;
 
@@ -45,6 +48,21 @@ public class RoomGameState {
             List<Long> procurementItemIds,
             RoomStatePayload.RoomSettingsPayload settings,
             List<PlayerState> initialPlayers
+    ) {
+        this(roomCode, items, procurementItemIds, settings, initialPlayers,
+                RoomSettingsPolicy.DEFAULT_SPEECH_SECONDS,
+                RoomSettingsPolicy.DEFAULT_REBUTTAL_SECONDS);
+    }
+
+    /** The speech/rebuttal limits are server-owned room settings, not WebSocket DTO fields. */
+    public RoomGameState(
+            String roomCode,
+            List<RoomStatePayload.ItemPayload> items,
+            List<Long> procurementItemIds,
+            RoomStatePayload.RoomSettingsPayload settings,
+            List<PlayerState> initialPlayers,
+            int speechSeconds,
+            int rebuttalSeconds
     ) {
         if (items == null || items.isEmpty()
         || procurementItemIds == null
@@ -59,6 +77,11 @@ public class RoomGameState {
         this.currentItemIndex = 0;
         this.currentItem = this.items.get(currentItemIndex);
         this.settings = settings;
+        if (speechSeconds < 1 || rebuttalSeconds < 1) {
+            throw new IllegalArgumentException("발언 및 반론 시간은 1초 이상이어야 합니다.");
+        }
+        this.speechSeconds = speechSeconds;
+        this.rebuttalSeconds = rebuttalSeconds;
 
         for (PlayerState player : initialPlayers) {
             players.put(player.getId(), player);
@@ -169,14 +192,22 @@ public class RoomGameState {
         return hand.get(index);
     }
 
+    /** Validate the room deadline before any persistent card mutation. */
+    public synchronized void requireDebateOpenAt(long now) {
+        if (phase != GamePhase.DEBATE) {
+            throw new GameActionException("INVALID", "토론 중에만 수행할 수 있습니다.");
+        }
+        if (itemEndsAt != null && now >= itemEndsAt) {
+            throw new GameActionException("TIME_EXPIRED", "토론 시간이 종료되었습니다.");
+        }
+    }
+
     public synchronized RoomStatePayload.SpeechPayload startSpeech(
         Long playerId,
         Long cardId,
         long now
 ) {
-    if (phase != GamePhase.DEBATE) {
-        throw new GameActionException("INVALID", "토론 중에만 발언할 수 있습니다.");
-    }
+    requireDebateOpenAt(now);
 
     PlayerState player = players.get(playerId);
     if (player == null) {
@@ -196,7 +227,7 @@ public class RoomGameState {
     speech = new RoomStatePayload.SpeechPayload(
             playerId.toString(),
             "SPEECH",
-            now + 120_000L,
+            now + speechSeconds * 1_000L,
             card.keyword()
     );
     lastSpeakerId = playerId;
@@ -208,6 +239,29 @@ public class RoomGameState {
             throw new GameActionException("NOT_YOUR_TURN", "현재 발언권을 가진 사람만 종료할 수 있습니다.");
         }
         speech = null;
+    }
+
+    /**
+     * Server clock is authoritative. The item deadline takes precedence over an
+     * active speech (including an approved rebuttal). A speech deadline only
+     * releases the floor; a pending moderator rebuttal decision is preserved.
+     */
+    public enum TimerOutcome {
+        NONE, SPEECH_EXPIRED, DEBATE_FINISHED
+    }
+
+    public synchronized TimerOutcome expireTimers(long now) {
+        if (phase != GamePhase.DEBATE) {
+            return TimerOutcome.NONE;
+        }
+        if (itemEndsAt != null && now >= itemEndsAt) {
+            return finishDebateIfActive() ? TimerOutcome.DEBATE_FINISHED : TimerOutcome.NONE;
+        }
+        if (speech != null && now >= speech.endsAt()) {
+            speech = null;
+            return TimerOutcome.SPEECH_EXPIRED;
+        }
+        return TimerOutcome.NONE;
     }
 
     /**
@@ -257,6 +311,9 @@ public class RoomGameState {
     }
 
     public synchronized ChatMessagePayload sendChat(Long playerId, String rawText, long now) {
+        if (phase == GamePhase.DEBATE) {
+            requireDebateOpenAt(now);
+        }
         PlayerState player = players.get(playerId);
         if (player == null) {
             throw new GameActionException("PLAYER_NOT_IN_ROOM", "방의 참가자가 아닙니다.");
@@ -271,7 +328,8 @@ public class RoomGameState {
         if (player.getRole() == LobbyRole.MODERATOR) {
             kind = "MODERATOR";
         } else {
-            if (speech == null || !playerId.toString().equals(speech.speakerId())) {
+            if (speech == null || !playerId.toString().equals(speech.speakerId())
+                    || now >= speech.endsAt()) {
                 throw new GameActionException("NOT_YOUR_TURN", "발언권이 있을 때만 채팅할 수 있습니다.");
             }
             kind = speech.kind();
@@ -296,9 +354,7 @@ public class RoomGameState {
             Long cardId,
             long now
     ) {
-        if (phase != GamePhase.DEBATE) {
-            throw new GameActionException("INVALID", "토론 중에만 반론을 요청할 수 있습니다.");
-        }
+        requireDebateOpenAt(now);
 
         PlayerState requester = players.get(requesterId);
         if (requester == null) {
@@ -308,7 +364,8 @@ public class RoomGameState {
             throw new GameActionException("INVALID", "진영을 선택한 객원만 반론을 요청할 수 있습니다.");
         }
         if (speech == null || !"SPEECH".equals(speech.kind())
-                || requesterId.toString().equals(speech.speakerId())) {
+                || requesterId.toString().equals(speech.speakerId())
+                || now >= speech.endsAt()) {
             throw new GameActionException("NO_TARGET", "반론할 상대의 발언이 없습니다.");
         }
         if (pendingRebuttal != null) {
@@ -342,6 +399,7 @@ public class RoomGameState {
         if (phase != GamePhase.DEBATE || pendingRebuttal == null) {
             throw new GameActionException("INVALID", "결정할 반론 요청이 없습니다.");
         }
+        requireDebateOpenAt(now);
 
         Long requesterId = Long.valueOf(pendingRebuttal.requesterId());
         String keyword = pendingRebuttal.keyword();
@@ -350,7 +408,7 @@ public class RoomGameState {
             speech = new RoomStatePayload.SpeechPayload(
                     requesterId.toString(),
                     "REBUTTAL",
-                    now + 60_000L,
+                    now + rebuttalSeconds * 1_000L,
                     keyword
             );
             lastSpeakerId = requesterId;

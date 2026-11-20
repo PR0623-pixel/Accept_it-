@@ -553,7 +553,9 @@ public class RoomService {
                         room.getTurnTimeLimit() * 60,
                         room.getMaxCardCount()
                 ),
-                gamePlayers
+                gamePlayers,
+                room.getSpeechSeconds(),
+                room.getRebuttalSeconds()
         );
 
         // DB 트랜잭션이 커밋된 경우에만 AFTER_COMMIT listener가 Store에 넣습니다.

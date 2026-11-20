@@ -190,26 +190,28 @@ public class LobbyWebSocketHandler extends TextWebSocketHandler {
     }
 
     private void startSpeech(ParticipantSocket source, Long cardId) {
-        RoomGameState state = gameStateStore.find(source.roomCode())
-                .orElseThrow(() -> new GameActionException("INVALID", "진행 중인 게임 상태를 찾을 수 없습니다."));
+        RoomGameState state = gameState(source);
+        long now = System.currentTimeMillis();
 
-        RoomGameState.PlayerState player = state.getPlayers().get(source.playerId());
-        if(player == null || player.getStance() == null){
-            throw new GameActionException("INVALID", "진영을 선택한 객원만 발언할 수 있습니다.");
+        // Take the same monitor as the timer before touching the database.
+        // A request arriving after itemEndsAt must not mark a DB card as used.
+        synchronized (state) {
+            state.requireDebateOpenAt(now);
+            RoomGameState.PlayerState player = state.getPlayers().get(source.playerId());
+            if (player == null || player.getStance() == null) {
+                throw new GameActionException("INVALID", "진영을 선택한 객원만 발언할 수 있습니다.");
+            }
+
+            state.handFor(source.playerId()).stream()
+                    .filter(card -> card.cardId() == cardId)
+                    .findFirst()
+                    .orElseThrow(() -> new GameActionException("CARD_REQUIRED", "본인 손패에 있는 카드를 선택해야 합니다."));
+
+            situationCardService.markUsed(
+                    source.roomCode(), cardId,
+                    DebateRole.valueOf(player.getStance().name()));
+            state.startSpeech(source.playerId(), cardId, now);
         }
-
-        state.handFor(source.playerId()).stream()
-                .filter(c -> c.cardId() == cardId)
-                .findFirst()
-                .orElseThrow(() -> new GameActionException("CARD_REQUIRED", "본인 손패에 있는 카드를 선택해야 합니다."));
-
-        situationCardService.markUsed(
-                source.roomCode(),
-                cardId,
-                DebateRole.valueOf(player.getStance().name())
-        );
-
-        state.startSpeech(source.playerId(), cardId, System.currentTimeMillis());
 
         sendQuietly(source.socket(), "HAND", state.handFor(source.playerId()));
         broadcastRoomState(source.roomCode());
