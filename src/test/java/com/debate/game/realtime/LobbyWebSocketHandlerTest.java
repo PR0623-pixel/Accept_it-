@@ -149,6 +149,76 @@ class LobbyWebSocketHandlerTest {
     }
 
     @Test
+    void decidesSecondItemAndClearsPrivateProgress() {
+        RoomGameState state = new RoomGameState("ABC123",
+                List.of(
+                        new com.debate.game.dto.websocket.RoomStatePayload.ItemPayload(1, "물품A", "설명A"),
+                        new com.debate.game.dto.websocket.RoomStatePayload.ItemPayload(2, "물품B", "설명B")),
+                List.of(1L, 2L),
+                new com.debate.game.dto.websocket.RoomStatePayload.RoomSettingsPayload(3, 300, 3),
+                List.of(
+                        new RoomGameState.PlayerState(11L, "객원1", LobbyRole.GUEST, true, true),
+                        new RoomGameState.PlayerState(12L, "객원2", LobbyRole.GUEST, true, false),
+                        new RoomGameState.PlayerState(13L, "사회자", LobbyRole.MODERATOR, true, false)));
+
+        state.vote(11L, Stance.PRO, 1_000L);
+        state.vote(12L, Stance.PRO, 1_000L);
+        state.giveCards(11L, List.of(
+                new com.debate.game.dto.websocket.CardPayload(101, "A", "A 카드", "A 설명", false)));
+        state.getChatHistory().add(new com.debate.game.dto.websocket.ChatMessagePayload(
+                "1", "CHAT", "11", "객원1", "PRO", "이전 채팅", null, 1_000L));
+
+        state.decideItem(13L, true, 2_000L);
+
+        assertEquals("물품B", state.getCurrentItem().name());
+        assertEquals(2L, state.procurementItemIdAt(1));
+        assertEquals(com.debate.game.Ingame.enums.GamePhase.VOTING, state.getPhase());
+        assertFalse(state.getPlayers().get(11L).isHasVoted());
+        assertFalse(state.getPlayers().get(12L).isHasVoted());
+        assertNull(state.getPlayers().get(11L).getStance());
+        assertNull(state.getPlayers().get(12L).getStance());
+        assertTrue(state.getHands().get(11L).isEmpty());
+        assertTrue(state.getChatHistory().isEmpty());
+
+        state.vote(11L, Stance.CON, 3_000L);
+        state.vote(12L, Stance.CON, 3_000L);
+        state.decideItem(13L, false, 4_000L);
+
+        assertEquals(com.debate.game.Ingame.enums.GamePhase.RESULT, state.getPhase());
+        assertNull(state.getCurrentItem());
+        assertEquals(2, state.getResults().size());
+    }
+
+    @Test
+    void decideItemUpdatesDatabaseCurrentProcurementItem() throws Exception {
+        RoomGameState state = new RoomGameState("ABC123",
+                List.of(
+                        new com.debate.game.dto.websocket.RoomStatePayload.ItemPayload(1, "물품A", "설명A"),
+                        new com.debate.game.dto.websocket.RoomStatePayload.ItemPayload(2, "물품B", "설명B")),
+                List.of(1L, 2L),
+                new com.debate.game.dto.websocket.RoomStatePayload.RoomSettingsPayload(3, 300, 3),
+                List.of(
+                        new RoomGameState.PlayerState(11L, "객원1", LobbyRole.GUEST, true, true),
+                        new RoomGameState.PlayerState(12L, "객원2", LobbyRole.GUEST, true, false),
+                        new RoomGameState.PlayerState(13L, "사회자", LobbyRole.MODERATOR, true, false)));
+        state.vote(11L, Stance.PRO, 1_000L);
+        state.vote(12L, Stance.PRO, 1_000L);
+        gameStates.save(state);
+
+        when(reader.read("ABC123")).thenReturn(lobby("ABC123", "13"));
+        WebSocketSession session = socket("moderator", "ABC123", "13");
+        handler.afterConnectionEstablished(session);
+
+        handler.handleTextMessage(session,
+                new TextMessage("{\"type\":\"DECIDE_ITEM\",\"payload\":{\"accept\":true}}"));
+
+        verify(rooms).updateCurrentProcurementItem("ABC123", 2L);
+        assertEquals("물품B", state.getCurrentItem().name());
+        assertTrue(state.getHands().get(11L).isEmpty());
+        assertTrue(state.getChatHistory().isEmpty());
+    }
+
+    @Test
     void acceptsLobbyCommandsUsingConnectionIdentityNotClientPayloadId() throws Exception {
         when(reader.read("ABC123")).thenReturn(lobby("ABC123", "11"));
         WebSocketSession session = socket("a", "ABC123", "11");

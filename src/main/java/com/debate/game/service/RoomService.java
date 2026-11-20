@@ -27,8 +27,6 @@ import com.debate.game.repository.ProcurementItemRepository;
 import com.debate.game.repository.RoomRepository;
 import com.debate.game.Ingame.GameStartedEvent;
 import com.debate.game.Ingame.RoomGameState;
-import com.debate.game.entity.SituationCard;
-import com.debate.game.entity.enums.DebateRole;
 import com.debate.game.entity.enums.Stance;
 import com.debate.game.repository.SituationCardRepository;
 
@@ -543,8 +541,8 @@ public class RoomService {
                 ))
                 .toList();
         List<Long> procurementItemIds = selectedItems.stream()
-        .map(ProcurementItem::getId)
-        .toList();
+                .map(ProcurementItem::getId)
+                .toList();
 
         RoomGameState gameState = new RoomGameState(
                 room.getRoomCode(),

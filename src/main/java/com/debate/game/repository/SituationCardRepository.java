@@ -12,10 +12,6 @@ import java.util.List;
 
 public interface SituationCardRepository extends JpaRepository<SituationCard, Long> {
 
-    List<SituationCard> findByRoom_IdAndOwnerRoleAndIsUsedFalseOrderByIdAsc(
-            Long roomId,
-            DebateRole ownerRole
-    );
     List<SituationCard> findByRoom_IdAndProcurementItem_IdAndOwnerRoleAndIsUsedFalseOrderByIdAsc(
             Long roomId,
             Long procurementItemId,
