@@ -1,95 +1,81 @@
-## 개요
+## Accept_It Project
+ACCEPT IT 실행기 사용법 및 요구사항
+=======================
 
-`feat/game-flow-stabilization` 브랜치에서 S01~S05 단계의 게임 진행·종료 흐름을 안정화하고, Vite 8과 React 플러그인의 버전 불일치를 수정했습니다.
+실행 방식은 2가지이며, exe 가 알아서 고릅니다.
+  (A) 설치 없이 실행 : AcceptIt.exe 옆에 runtime 폴더가 있으면 → Docker/Java 필요 없음 (다른 사람에게 줄 때)
+  (B) Docker 방식    : runtime 폴더가 없으면 → 프로젝트 폴더 안에서 Docker Desktop + Java 21 사용 (개발할 때)
 
-토론 종료, 서버 타이머, 카드 소진, 발언/반론 상태와 DB 정합성, 물품 판정 및 최종 게임 종료를 일관된 WebSocket 흐름으로 처리하도록 보강했습니다.
 
-- **Base:** `main`
-- **Compare:** `feat/game-flow-stabilization`
-- **DB 스키마 변경:** 없음 (신규 Flyway 마이그레이션 없음)
+■ 1. 다른 사람에게 줄 '설치 없이 실행' 폴더 만들기 (개발자 PC 에서 1번만, 인터넷 필요)
+  1) launcher 폴더를 프로젝트 폴더(build.gradle, docker-compose.yml 이 있는 곳) 안에 둡니다.
+  2) launcher\make-bundle.bat 더블클릭
+       - 백엔드를 jar 로 빌드 (gradlew bootJar -x test, JDK 21 필요, 몇 분)
+       - Java 21(JRE), MySQL 8.0(ZIP 버전)을 내려받아 runtime 폴더에 배치
+       - dist\AcceptIt 폴더와 dist\AcceptIt.zip (약 300~400MB) 생성
+  3) dist\AcceptIt.zip 을 전달합니다. 백엔드 코드가 바뀌면 make-bundle.bat 을 다시 실행하세요.
 
-## 주요 변경 사항
+  (내려받기가 막히면 직접 받아서 dist\_download 에 이름을 맞춰 저장 후 다시 실행)
+     - Java 21 JRE zip(Temurin, Windows x64)  → dist\_download\jre.zip
+     - MySQL 8.0.x Windows ZIP Archive        → dist\_download\mysql.zip
 
-### S01. 토론 종료 상태 전환 공통화
 
-- `RoomGameState.finishDebateIfActive()`로 `DEBATE → MODERATOR_DECISION` 전환 로직을 공통화했습니다.
-- 수동 종료와 자동 종료의 중복 상태 전환 및 중복 WebSocket 전송을 방지했습니다.
-- 토론 종료 시 진행 중 발언·반론 정보를 정리하고, 미처리 반론의 예약 카드 반환 경로를 마련했습니다.
-- 종료 후 `ROOM_STATE` 및 참가자별 `HAND`를 갱신하도록 했습니다.
+■ 2. 받은 사람이 하는 일
+  1) 아무 폴더에나 압축을 풉니다. (한글 경로면 실행기가 알아서 Z: 같은 가상 드라이브로 연결해 실행합니다.
+     그래도 DB 가 안 켜지면 C:\AcceptIt 처럼 영문 경로로 옮기세요.)
+  2) AcceptIt.exe 더블클릭
+       - 처음 1~2분: DB 자동 준비(data 폴더 생성) → 백엔드 시작 → 브라우저에 게임이 열림
+       - '출처를 알 수 없는 앱' 경고: 추가 정보 → 실행
+       - 방화벽 창: 같은 와이파이의 다른 사람과 하려면 '허용'
+  3) 같이 하는 방법은 아래 '여러 컴퓨터에서 같이 하기' 참고
+  ※ 3307/8080/5173 포트가 이미 쓰이고 있으면 알아서 빈 포트를 골라 씁니다. 화면에 안내되는 '게임 주소'로 접속하세요.
+  4) 끝낼 때: 검은 창에서 Ctrl+C 또는 창 닫기 (DB 를 안전하게 종료함)
+  ※ 윈도우가 'VCRUNTIME / MSVCP 가 없다'고 하면 https://aka.ms/vs/17/release/vc_redist.x64.exe 설치
 
-### S02. 서버 기준 타이머 구현
 
-- `@EnableScheduling`과 `GameTimerService`를 이용한 주기적 타이머 검사(기본 250ms)를 추가했습니다.
-- 물품 전체 토론 시간과 일반 발언·승인된 반론의 제한 시간을 서버 기준으로 검증합니다.
-- 시간 만료 시 발언권 종료 또는 `MODERATOR_DECISION` 전환을 자동 처리합니다.
-- DB에 설정된 `speechSeconds`, `rebuttalSeconds`를 실제 게임 상태에 반영하고, 만료된 요청의 카드 사용 처리를 방지합니다.
+■ 여러 컴퓨터에서 같이 하기 (같은 와이파이/공유기)
+  모두 각자 AcceptIt.exe 를 실행하면 됩니다. 메뉴는 없고, 게임 화면의 Host / Join 으로 합니다.
+    1) 방장 : 화면에서 Host 로 방을 만들고, 나온 방 코드를 알려 줍니다.
+              (검은 창에 '서버 준비 완료'가 뜬 뒤에 Host 가 됩니다. 처음 1~2분)
+    2) 참가자 : 화면에서 Join → 방 코드 입력. 같은 와이파이의 방장 컴퓨터를 실행기가 자동으로 찾아 연결합니다.
+              (참가만 할 사람은 '서버 준비 완료'를 기다리지 않고 바로 Join 해도 됩니다.)
+    ※ 같은 와이파이/공유기여야 합니다. 학교·카페 와이파이는 기기끼리 통신을 막는 경우가 있어요 → 휴대폰 핫스팟에 모두 연결.
+    ※ 방장 컴퓨터 방화벽: 첫 실행 때 뜨는 창에서 '허용'(개인 네트워크). 놓쳤다면 관리자 권한 명령 프롬프트에서
+        netsh advfirewall firewall add rule name="AcceptIt" dir=in action=allow protocol=TCP localport=5173
+        netsh advfirewall firewall add rule name="AcceptIt-find" dir=in action=allow protocol=UDP localport=47321
+      (화면 포트가 5173 이 아니면 실제 '게임 주소'의 번호로)
+    ※ 자동으로 못 찾을 때: 방장 창에 나온 http://IP:포트 를 참가자가 브라우저에서 직접 열어 Join 하세요.
+    ※ 다른 건물/다른 네트워크에서 하려면 Tailscale 같은 가상 네트워크가 필요합니다.
+    ※ 옵션: AcceptIt.exe -menu (시작 메뉴 표시), AcceptIt.exe -join 192.168.0.12:5173 (주소 직접 지정)
 
-### S03. 카드 소진 시 토론 자동 종료
 
-- 현재 물품의 PRO/CON 중 한쪽이라도 사용 가능한 카드가 소진되면 토론 종료 조건을 충족하도록 했습니다.
-- 진행 중인 발언·승인된 반론 및 심사 대기 중인 반론을 마무리한 뒤 종료하며, 물품 전체 제한 시간 만료를 우선합니다.
-- 반론 묵살 시 반환된 카드를 반영하고, 다음 물품의 카드와 이전 물품의 카드를 분리해 처리합니다.
+■ 와이파이/네트워크가 달라도 같이 하기 (인터넷 공개)
+  방장 컴퓨터에서 AcceptIt-public.bat 를 실행하세요. (또는 AcceptIt.exe -public)
+    1) 10~30초 뒤 검은 창과, 방장 컴퓨터 브라우저의 '메인 화면 왼쪽 아래 상자'에 인터넷 주소가 나옵니다. (복사 버튼 있음)
+       (상자는 방장 컴퓨터 화면에만 보이고, 참가자 화면에는 나오지 않습니다. 같은 와이파이 주소도 함께 표시됩니다.)
+    2) 그 주소를 참가자에게 알려 줍니다. 참가자는 AcceptIt.exe 없이 브라우저(휴대폰 가능)로 열고 Join 에 방 코드를 입력합니다.
+    ※ 방장 컴퓨터는 인터넷에 연결되어 있어야 하고, 게임이 끝날 때까지 켜 두어야 합니다.
+    ※ 주소는 실행할 때마다 바뀝니다. 주소를 아는 누구나 접속할 수 있으니 게임이 끝나면 창을 닫으세요.
+    ※ cloudflared 는 make-bundle.bat 이 runtime 폴더에 넣어 줍니다. (없으면 안내가 나옵니다)
+    ※ 이 방식에서는 방화벽 설정이나 같은 와이파이가 필요 없습니다.
 
-### S04. 카드·발언·반론 정합성 보강
 
-- `START_SPEECH`, `REQUEST_REBUTTAL` 요청의 권한·현재 단계·카드 소유·사용 여부 등을 DB 갱신 전에 검증합니다.
-- 카드 사용 및 복구 시 방·현재 물품·진영 조건을 확인하고, 중복 요청에 따른 카드 이중 사용을 방지합니다.
-- 반론 묵살 및 미처리 반론 종료 시 DB의 `is_used`와 개인별 `HAND.used` 상태를 맞추도록 보강했습니다.
-- 카드 부족 또는 중복 배분 실패 시 마지막 투표를 되돌려 재시도할 수 있도록 처리했습니다.
-- 같은 방의 관련 요청을 직렬화해 동시성 문제를 줄였습니다.
+■ 3. 물품 목록 바꾸기
+  items.txt 에 한 줄에 하나씩  '이름 | 설명 | 분류'  로 적고 저장 → AcceptIt.exe 다시 실행
+  → DB(procurement_item)에 반영되어 그 목록에서만 무작위 출제됩니다. (5개 이상 권장)
+  서버가 켜져 있는 상태에서 물품만 바꾸려면:  AcceptIt.exe -sync-only
 
-### S05. 물품 판정 및 게임 종료 DB 정합성
 
-- 사회자의 `DECIDE_ITEM` 처리에 대해 `RoomService.commitItemProgress()` 단일 트랜잭션 경로를 도입했습니다.
-- 중간 물품 판정 시 `IN_PROGRESS`와 다음 물품의 `VOTING`을 유지하고, 마지막 물품 판정 시 DB `FINISHED` 및 게임 `RESULT`로 전환합니다.
-- 현재 물품 ID를 검증하고, DB 커밋 성공 이후에만 메모리의 상태와 결과를 변경하도록 했습니다.
-- `RESULT` 진입 시 `ROOM_STATE`, 개인별 빈 `HAND`, `CHAT_HISTORY`를 동기화하며 종료 후 추가 명령을 거부합니다.
-- DB만 종료시키던 구형 `POST /api/debate/{roomId}/finish` 우회 경로는 `409 Conflict`로 차단했습니다.
+■ 키워드 카드 바꾸기 (찬성/반대 40개, 무작위 지급)
+  keywords.txt 에 한 줄에 하나씩  '찬성|반대 | 키워드(50자 이하) | 설명'  으로 적고 저장 → AcceptIt.exe 다시 실행
+  → 물품마다 객원이 고른 입장(찬성/반대)에 맞는 카드가 이 목록에서 무작위로, 겹치지 않게 지급됩니다.
+  찬성·반대 각각 5개 이상 필요합니다. (기본 40개: 찬성 20 + 반대 20, 지우고 직접 써도 됩니다)
+  백엔드 코드는 그대로이고, DB 가 카드를 저장하는 순간 키워드/설명만 바꿔 줍니다.
+  ※ 이미 시작된 게임의 카드는 바뀌지 않고, 새로 시작하는 게임부터 적용됩니다.
 
-### 프론트엔드 호환성 수정
 
-- Vite 8과 호환되도록 `@vitejs/plugin-react` 의존성을 6.x 계열로 갱신했습니다.
-- `frontend/package.json`, `frontend/package-lock.json`을 정리하고, 의존성 설치·재설치·빌드 확인용 `frontend/fix-vite-react-deps.cmd`를 추가했습니다.
-- 확인된 설치 버전: `vite@8.3.8`, `@vitejs/plugin-react@6.3.0`.
-- 기존 Vite의 `/api`, `/ws` 개발 프록시 및 `VITE_USE_MOCK=false`를 통한 실서버 연결 방식을 유지합니다.
-
-## 테스트 및 검증
-
-- [x] **백엔드 자동 테스트 기록 확인:** 첨부 소스의 `build/test-results/test` XML 기준 **47개 테스트 클래스, 총 242개 테스트 / 실패 0 / 오류 0 / 건너뜀 0** (2026-11-21 기록). *이번 PR 문서 작성 과정에서 재실행한 결과는 아닙니다.*
-- [x] **프론트엔드:** `npm install --save-dev "@vitejs/plugin-react@^6.0.3"` 성공
-- [x] **프론트엔드:** `npm ci` 성공, 설치 감사 결과 취약점 0개
-- [x] **프론트엔드:** `npm run build` 성공 (`tsc --noEmit && vite build`)
-- [x] **의존성 확인:** `npm ls vite @vitejs/plugin-react --depth=0` 성공
-- [ ] **수동 통합 검증:** 실제 Docker MySQL + Spring Boot + Vite 연결에서 사회자 1명/객원 2명의 전체 흐름 확인
-- [ ] **DB 실측 검증:** 마지막 판정 후 `room.status=FINISHED`, 다음 물품 진행 시 `IN_PROGRESS` 및 `current_item_id` 갱신 확인
-
-### 재현 명령어 (Windows PowerShell)
-
-```powershell
-# 프로젝트 루트에서
-docker compose up -d mysql-db
-.\gradlew.bat clean test
-.\gradlew.bat bootRun
-
-# 별도 터미널에서
-cd frontend
-npm ci
-npm run build
-npm run dev
-```
-
-실제 백엔드 연결 테스트 시 `frontend/.env.local`에 `VITE_USE_MOCK=false`를 지정합니다.
-
-## 리뷰 시 확인 사항
-
-- [ ] 토론 수동 종료·전체 시간 만료·카드 소진 종료가 동시에 발생해도 전환/전송이 중복되지 않는지 확인
-- [ ] 반론 예약·묵살·승인·시간 만료에 대해 DB `is_used`와 개인별 `HAND.used`가 일치하는지 확인
-- [ ] 최종 `DECIDE_ITEM` 중복 요청 및 DB 실패 시 결과가 중복 기록되거나 메모리 상태만 변경되지 않는지 확인
-- [ ] **루트 `package-lock.json` 확인:** 프론트엔드용 lockfile 외에 루트에 빈 패키지 목록의 lockfile이 추가됨. 필요 없다면 제외 검토
-
-## 알려진 제약 / 후속 작업
-
-- 방 상태·물품 진행은 일부 DB에 반영되지만, **물품별 판정 결과 목록은 현재 메모리에만 보관**됩니다. 서버 재시작 후 게임 상태/타이머/결과 복구 및 완전한 영속화는 후속 작업 범위입니다.
-- 인메모리 상태와 DB는 단일 ACID 트랜잭션이 아니므로, DB 커밋 직후 프로세스가 비정상 종료되는 극단적 상황에 대한 복구는 별도 보강이 필요합니다.
-- WebSocket `playerId` 인증 강화와 정식 상황 카드 콘텐츠 등록도 별도 후속 작업입니다.
-- 자동 테스트 통과와 별개로 3인 브라우저·실제 MySQL을 사용하는 종단 간 검증 완료 여부는 병합 전에 확인해야 합니다.
+■ 4. 개발자용 Docker 방식 (runtime 폴더 없이, 프로젝트 폴더 안에서)
+  준비: Docker Desktop 켜기, Java 21.  launcher\AcceptIt.exe 더블클릭.
+  3307/8080 을 쓰는 다른 컨테이너가 있으면 묻고 멈춤, DB 계정이 .env 와 다르면 초기화 여부를 묻습니다.
+  runtime 폴더가 있어도 Docker 방식으로 하려면:  AcceptIt.exe -docker
+  로그: 설치 없는 모드는 data\acceptit-backend.log, data\mysqld.log / Docker 모드는 프로젝트 폴더의 acceptit-backend.log
