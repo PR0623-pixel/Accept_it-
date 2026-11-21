@@ -267,6 +267,9 @@ public class RoomGameState {
     }
 
     public synchronized CardPayload useCard(Long playerId, Long cardId) {
+        if (phase != GamePhase.DEBATE) {
+            throw new GameActionException("INVALID", "토론 중에만 카드를 사용할 수 있습니다.");
+        }
         CardPayload card = unusedCard(playerId, cardId);
         List<CardPayload> hand = hands.get(playerId);
         int index = hand.indexOf(card);
@@ -438,6 +441,9 @@ public class RoomGameState {
     }
 
     public synchronized ChatMessagePayload sendChat(Long playerId, String rawText, long now) {
+        if (phase == GamePhase.RESULT) {
+            throw new GameActionException("INVALID", "종료된 게임에서는 채팅할 수 없습니다.");
+        }
         if (phase == GamePhase.DEBATE) {
             requireDebateOpenAt(now);
         }

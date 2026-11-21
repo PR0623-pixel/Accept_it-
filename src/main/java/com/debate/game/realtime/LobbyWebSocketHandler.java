@@ -374,38 +374,24 @@ public class LobbyWebSocketHandler extends TextWebSocketHandler {
 
         synchronized (state) {
             int nextIndex = state.validateItemDecisionAndGetNextIndex(source.playerId());
+            Long expectedItemId = state.procurementItemIdAt(state.getCurrentItemIndex());
+            Long nextItemId = nextIndex < 0 ? null : state.procurementItemIdAt(nextIndex);
 
-            if (nextIndex >= 0) {
-                Long nextProcurementItemId = state.procurementItemIdAt(nextIndex);
-                roomService.updateCurrentProcurementItem(
-                        source.roomCode(),
-                        nextProcurementItemId
-                );
-            } else {
-                roomService.finishGame(source.roomCode());
-            }
+            // Commit DB progression before changing in-memory results/phase.
+            // Any failure sends ERROR to the requester without a false RESULT.
+            roomService.commitItemProgress(source.roomCode(), expectedItemId, nextItemId);
+            state.decideItem(source.playerId(), accept, System.currentTimeMillis());
 
-            state.decideItem(
-                    source.playerId(),
-                    accept,
-                    System.currentTimeMillis()
-            );
-        }
-
-        if (state.getPhase() == GamePhase.VOTING) {
+            // Keep the room monitor until delivery. A concurrent action must
+            // not overtake the ROUND/RESULT snapshot and personal hand reset.
             broadcastRoomState(source.roomCode());
-
             for (ParticipantSocket connection : connections.values()) {
                 if (!source.roomCode().equals(connection.roomCode())) {
                     continue;
                 }
-
-                sendQuietly(connection.socket(), "HAND",
-                        state.handFor(connection.playerId()));
+                sendQuietly(connection.socket(), "HAND", state.handFor(connection.playerId()));
                 sendQuietly(connection.socket(), "CHAT_HISTORY", List.of());
             }
-        } else {
-            broadcastRoomState(source.roomCode());
         }
     }
 

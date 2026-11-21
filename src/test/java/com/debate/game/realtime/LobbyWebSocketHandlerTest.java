@@ -212,7 +212,7 @@ class LobbyWebSocketHandlerTest {
         handler.handleTextMessage(session,
                 new TextMessage("{\"type\":\"DECIDE_ITEM\",\"payload\":{\"accept\":true}}"));
 
-        verify(rooms).updateCurrentProcurementItem("ABC123", 2L);
+        verify(rooms).commitItemProgress("ABC123", 1L, 2L);
         assertEquals("물품B", state.getCurrentItem().name());
         assertTrue(state.getHands().get(11L).isEmpty());
         assertTrue(state.getChatHistory().isEmpty());
@@ -247,7 +247,7 @@ class LobbyWebSocketHandlerTest {
         handler.handleTextMessage(session,
                 new TextMessage("{\"type\":\"DECIDE_ITEM\",\"payload\":{\"accept\":true}}"));
 
-        verify(rooms).finishGame("ABC123");
+        verify(rooms).commitItemProgress("ABC123", 1L, null);
         assertEquals(com.debate.game.Ingame.enums.GamePhase.RESULT, state.getPhase());
         assertNull(state.getCurrentItem());
     }
