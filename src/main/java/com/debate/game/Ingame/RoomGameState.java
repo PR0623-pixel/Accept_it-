@@ -8,6 +8,7 @@ import com.debate.game.dto.websocket.RoomStatePayload.PendingRebuttalPayload;
 import com.debate.game.entity.enums.LobbyRole;
 import com.debate.game.entity.enums.Stance;
 import com.debate.game.websocket.GameActionException;
+import com.debate.game.validation.RoomSettingsPolicy;
 import lombok.Getter;
 import lombok.Setter;
 
@@ -36,6 +37,8 @@ public class RoomGameState {
     private final List<RoomStatePayload.ItemPayload> items;
     private final List<Long> procurementItemIds;
     private int currentItemIndex;
+    private final int speechSeconds;
+    private final int rebuttalSeconds;
  
     private long nextEffectId = 1;
 
@@ -45,6 +48,21 @@ public class RoomGameState {
             List<Long> procurementItemIds,
             RoomStatePayload.RoomSettingsPayload settings,
             List<PlayerState> initialPlayers
+    ) {
+        this(roomCode, items, procurementItemIds, settings, initialPlayers,
+                RoomSettingsPolicy.DEFAULT_SPEECH_SECONDS,
+                RoomSettingsPolicy.DEFAULT_REBUTTAL_SECONDS);
+    }
+
+    /** The speech/rebuttal limits are server-owned room settings, not WebSocket DTO fields. */
+    public RoomGameState(
+            String roomCode,
+            List<RoomStatePayload.ItemPayload> items,
+            List<Long> procurementItemIds,
+            RoomStatePayload.RoomSettingsPayload settings,
+            List<PlayerState> initialPlayers,
+            int speechSeconds,
+            int rebuttalSeconds
     ) {
         if (items == null || items.isEmpty()
         || procurementItemIds == null
@@ -59,6 +77,11 @@ public class RoomGameState {
         this.currentItemIndex = 0;
         this.currentItem = this.items.get(currentItemIndex);
         this.settings = settings;
+        if (speechSeconds < 1 || rebuttalSeconds < 1) {
+            throw new IllegalArgumentException("발언 및 반론 시간은 1초 이상이어야 합니다.");
+        }
+        this.speechSeconds = speechSeconds;
+        this.rebuttalSeconds = rebuttalSeconds;
 
         for (PlayerState player : initialPlayers) {
             players.put(player.getId(), player);
@@ -133,6 +156,52 @@ public class RoomGameState {
         hands.put(playerId, new ArrayList<>(cards));
     }
 
+    /**
+     * Install both guests' hands atomically for this item. Never publish a
+     * DEBATE with one side's hand present and the other side missing.
+     */
+    public synchronized void giveHandsForDebate(Map<Long, List<CardPayload>> dealt) {
+        if (phase != GamePhase.DEBATE) {
+            throw new GameActionException("INVALID", "토론 중이 아닙니다.");
+        }
+        List<Long> guests = players.values().stream()
+                .filter(p -> p.getRole() == LobbyRole.GUEST && p.getStance() != null)
+                .map(PlayerState::getId).toList();
+        if (guests.size() != 2 || dealt == null || !dealt.keySet().equals(new java.util.HashSet<>(guests))) {
+            throw new GameActionException("CARDS_UNAVAILABLE", "두 객원의 손패를 모두 지급할 수 없습니다.");
+        }
+        java.util.Set<Long> cardIds = new java.util.HashSet<>();
+        for (Long guest : guests) {
+            List<CardPayload> hand = dealt.get(guest);
+            if (hand == null || hand.size() != settings.cardsPerItem()) {
+                throw new GameActionException("CARDS_UNAVAILABLE", "이번 물품에 지급할 카드가 부족합니다.");
+            }
+            for (CardPayload card : hand) {
+                if (card == null || card.used() || card.cardId() <= 0 || !cardIds.add(card.cardId())) {
+                    throw new GameActionException("CARDS_UNAVAILABLE", "지급 카드 정보가 중복되거나 올바르지 않습니다.");
+                }
+            }
+        }
+        for (Long guest : guests) {
+            hands.put(guest, new ArrayList<>(dealt.get(guest)));
+        }
+    }
+
+    /** Undo only the final vote when card allocation fails before any HAND is installed. */
+    public synchronized void rollbackUndealtDebateVote(Long finalVoterId) {
+        if (phase != GamePhase.DEBATE || hands.values().stream().anyMatch(hand -> !hand.isEmpty())) {
+            throw new IllegalStateException("이미 진행 중이거나 손패가 배분된 토론을 되돌릴 수 없습니다.");
+        }
+        PlayerState voter = players.get(finalVoterId);
+        if (voter == null || !voter.isHasVoted()) {
+            throw new IllegalStateException("되돌릴 투표가 없습니다.");
+        }
+        voter.setHasVoted(false);
+        voter.setStance(null);
+        phase = GamePhase.VOTING;
+        itemEndsAt = null;
+    }
+
     public synchronized Long procurementItemIdAt(int index) {
         if (index < 0 || index >= procurementItemIds.size()) {
             throw new IllegalArgumentException("물품 인덱스가 올바르지 않습니다.");
@@ -140,24 +209,69 @@ public class RoomGameState {
         return procurementItemIds.get(index);
     }
 
-    public synchronized CardPayload useCard(Long playerId, Long cardId) {
+    /**
+     * Preflight checks must run before any persistent card update. The websocket
+     * adapter holds this state's monitor across preflight, DB update and commit.
+     */
+    public synchronized CardPayload validateSpeechCard(Long playerId, Long cardId, long now) {
+        requireDebateOpenAt(now);
+        PlayerState player = requireGuestWithStance(playerId);
+        if (speech != null || pendingRebuttal != null) {
+            throw new GameActionException("FLOOR_BUSY", "다른 사람이 발언 중입니다.");
+        }
+        if (player.getId().equals(lastSpeakerId)) {
+            throw new GameActionException("CONSECUTIVE_SPEECH", "직전 발언자는 연속으로 발언할 수 없습니다.");
+        }
+        return unusedCard(playerId, cardId);
+    }
+
+    public synchronized CardPayload validateRebuttalCard(Long requesterId, Long cardId, long now) {
+        requireDebateOpenAt(now);
+        requireGuestWithStance(requesterId);
+        if (speech == null || !"SPEECH".equals(speech.kind())
+                || requesterId.toString().equals(speech.speakerId())
+                || now >= speech.endsAt()) {
+            throw new GameActionException("NO_TARGET", "반론할 상대의 발언이 없습니다.");
+        }
+        if (pendingRebuttal != null) {
+            throw new GameActionException("PENDING", "이미 처리 대기 중인 반론 요청이 있습니다.");
+        }
+        return unusedCard(requesterId, cardId);
+    }
+
+    private PlayerState requireGuestWithStance(Long playerId) {
+        PlayerState player = players.get(playerId);
+        if (player == null) {
+            throw new GameActionException("PLAYER_NOT_IN_ROOM", "방의 참가자가 아닙니다.");
+        }
+        if (player.getRole() != LobbyRole.GUEST || player.getStance() == null) {
+            throw new GameActionException("INVALID", "진영을 선택한 객원만 카드를 사용할 수 있습니다.");
+        }
+        return player;
+    }
+
+    private CardPayload unusedCard(Long playerId, Long cardId) {
         List<CardPayload> hand = hands.get(playerId);
         if (hand == null) {
             throw new GameActionException("INVALID", "손패가 없습니다.");
         }
-
         CardPayload card = hand.stream()
-                .filter(item -> item.cardId() == cardId)
+                .filter(item -> cardId != null && item.cardId() == cardId)
                 .findFirst()
                 .orElseThrow(() -> new GameActionException(
-                        "CARD_NOT_IN_HAND",
-                        "본인 손패에 없는 카드입니다."
-                ));
-
+                        "CARD_NOT_IN_HAND", "본인 손패에 없는 카드입니다."));
         if (card.used()) {
             throw new GameActionException("CARD_ALREADY_USED", "이미 사용한 카드입니다.");
         }
+        return card;
+    }
 
+    public synchronized CardPayload useCard(Long playerId, Long cardId) {
+        if (phase != GamePhase.DEBATE) {
+            throw new GameActionException("INVALID", "토론 중에만 카드를 사용할 수 있습니다.");
+        }
+        CardPayload card = unusedCard(playerId, cardId);
+        List<CardPayload> hand = hands.get(playerId);
         int index = hand.indexOf(card);
         hand.set(index, new CardPayload(
                 card.cardId(),
@@ -169,58 +283,152 @@ public class RoomGameState {
         return hand.get(index);
     }
 
+    /**
+     * A side is exhausted when its guest has no unused cards in the current
+     * item's hand. Only evaluate a fully dealt PRO-vs-CON debate: a temporary
+     * empty hand during the voting/dealing sequence is not card exhaustion.
+     *
+     * Card contents and allocation come from the DB; this check never creates
+     * or carries cards across items.
+     */
+    public synchronized boolean hasExhaustedSide() {
+        if (phase != GamePhase.DEBATE) {
+            return false;
+        }
+        boolean proPresent = false;
+        boolean conPresent = false;
+        boolean proExhausted = false;
+        boolean conExhausted = false;
+        for (PlayerState player : players.values()) {
+            if (player.getRole() != LobbyRole.GUEST || player.getStance() == null) {
+                continue;
+            }
+            List<CardPayload> hand = hands.get(player.getId());
+            // The deal is complete only when both opposing guests have hands.
+            if (hand == null || hand.isEmpty()) {
+                return false;
+            }
+            boolean exhausted = hand.stream().noneMatch(card -> !card.used());
+            if (player.getStance() == Stance.PRO) {
+                if (proPresent) return false;
+                proPresent = true;
+                proExhausted = exhausted;
+            } else {
+                if (conPresent) return false;
+                conPresent = true;
+                conExhausted = exhausted;
+            }
+        }
+        return proPresent && conPresent && (proExhausted || conExhausted);
+    }
+
+    /**
+     * Resolve card exhaustion only after the current floor and any pending
+     * rebuttal have been settled. Return true only for an actual transition.
+     * The S02 item deadline remains higher priority in expireTimers().
+     */
+    public synchronized boolean finishDebateIfCardsExhausted() {
+        if (speech != null || pendingRebuttal != null || !hasExhaustedSide()) {
+            return false;
+        }
+        return finishDebateIfActive();
+    }
+
+    /** Validate the room deadline before any persistent card mutation. */
+    public synchronized void requireDebateOpenAt(long now) {
+        if (phase != GamePhase.DEBATE) {
+            throw new GameActionException("INVALID", "토론 중에만 수행할 수 있습니다.");
+        }
+        if (itemEndsAt != null && now >= itemEndsAt) {
+            throw new GameActionException("TIME_EXPIRED", "토론 시간이 종료되었습니다.");
+        }
+    }
+
     public synchronized RoomStatePayload.SpeechPayload startSpeech(
-        Long playerId,
-        Long cardId,
-        long now
-) {
-    if (phase != GamePhase.DEBATE) {
-        throw new GameActionException("INVALID", "토론 중에만 발언할 수 있습니다.");
+            Long playerId, Long cardId, long now) {
+        validateSpeechCard(playerId, cardId, now);
+        CardPayload card = useCard(playerId, cardId);
+        speech = new RoomStatePayload.SpeechPayload(
+                playerId.toString(), "SPEECH", now + speechSeconds * 1_000L, card.keyword());
+        lastSpeakerId = playerId;
+        return speech;
     }
 
-    PlayerState player = players.get(playerId);
-    if (player == null) {
-        throw new GameActionException("PLAYER_NOT_IN_ROOM", "방의 참가자가 아닙니다.");
-    }
-    if (player.getRole() != LobbyRole.GUEST || player.getStance() == null) {
-        throw new GameActionException("INVALID", "객원만 발언할 수 있습니다.");
-    }
-    if (speech != null || pendingRebuttal != null) {
-        throw new GameActionException("FLOOR_BUSY", "다른 사람이 발언 중입니다.");
-    }
-    if (playerId.equals(lastSpeakerId)) {
-        throw new GameActionException("CONSECUTIVE_SPEECH", "직전 발언자는 연속으로 발언할 수 없습니다.");
-    }
-
-    CardPayload card = useCard(playerId, cardId);
-    speech = new RoomStatePayload.SpeechPayload(
-            playerId.toString(),
-            "SPEECH",
-            now + 120_000L,
-            card.keyword()
-    );
-    lastSpeakerId = playerId;
-    return speech;
-}
-
-    public synchronized void endSpeech(Long playerId) {
+    /** @return true when finishing this speech also finishes the debate. */
+    public synchronized boolean endSpeech(Long playerId) {
         if (speech == null || !playerId.toString().equals(speech.speakerId())) {
             throw new GameActionException("NOT_YOUR_TURN", "현재 발언권을 가진 사람만 종료할 수 있습니다.");
         }
         speech = null;
+        return finishDebateIfCardsExhausted();
     }
 
-    public synchronized void endDebate(Long moderatorId) {
-        if (phase != GamePhase.DEBATE) {
-            throw new GameActionException("INVALID", "토론 중에만 종료할 수 있습니다.");
-        }
+    /**
+     * Server clock is authoritative. The item deadline takes precedence over an
+     * active speech (including an approved rebuttal). A speech deadline only
+     * releases the floor; a pending moderator rebuttal decision is preserved.
+     */
+    public enum TimerOutcome {
+        NONE, SPEECH_EXPIRED, DEBATE_FINISHED
+    }
 
+    public synchronized TimerOutcome expireTimers(long now) {
+        if (phase != GamePhase.DEBATE) {
+            return TimerOutcome.NONE;
+        }
+        if (itemEndsAt != null && now >= itemEndsAt) {
+            return finishDebateIfActive() ? TimerOutcome.DEBATE_FINISHED : TimerOutcome.NONE;
+        }
+        if (speech != null && now >= speech.endsAt()) {
+            speech = null;
+            return finishDebateIfCardsExhausted()
+                    ? TimerOutcome.DEBATE_FINISHED : TimerOutcome.SPEECH_EXPIRED;
+        }
+        // Also catch card use performed by any other server-side action while
+        // the floor is idle. This does not interfere with a pending rebuttal.
+        return finishDebateIfCardsExhausted()
+                ? TimerOutcome.DEBATE_FINISHED : TimerOutcome.NONE;
+    }
+
+    /**
+     * Manual moderator action. Returns false on an already-completed debate so
+     * duplicate END_DEBATE frames do not emit duplicate state changes.
+     */
+    public synchronized boolean endDebate(Long moderatorId) {
+        validateManualDebateEnd(moderatorId);
+        return finishDebateIfActive();
+    }
+
+    /** Validate first: an invalid actor must never restore a reserved DB card. */
+    public synchronized void validateManualDebateEnd(Long moderatorId) {
         PlayerState moderator = players.get(moderatorId);
         if (moderator == null) {
             throw new GameActionException("PLAYER_NOT_IN_ROOM", "방의 참가자가 아닙니다.");
         }
         if (moderator.getRole() != LobbyRole.MODERATOR) {
             throw new GameActionException("INVALID", "사회자만 토론을 종료할 수 있습니다.");
+        }
+        if (phase != GamePhase.DEBATE && phase != GamePhase.MODERATOR_DECISION) {
+            throw new GameActionException("INVALID", "토론 중에만 종료할 수 있습니다.");
+        }
+    }
+
+    /**
+     * Single DEBATE -> MODERATOR_DECISION transition for every termination source.
+     * Callers (manual action, S02 timer, S03 card exhaustion) validate their
+     * own trigger before invoking this idempotent cleanup operation.
+     *
+     * @return true only for the first successful transition
+     */
+    public synchronized boolean finishDebateIfActive() {
+        if (phase != GamePhase.DEBATE) {
+            return false;
+        }
+
+        // A pending rebuttal has not been approved. Cancel it and return its
+        // reserved card before discarding the pending request.
+        if (pendingRebuttal != null && pendingRebuttalCardId != null) {
+            restoreCard(Long.valueOf(pendingRebuttal.requesterId()), pendingRebuttalCardId);
         }
 
         phase = GamePhase.MODERATOR_DECISION;
@@ -229,9 +437,16 @@ public class RoomGameState {
         lastSpeakerId = null;
         pendingRebuttal = null;
         pendingRebuttalCardId = null;
+        return true;
     }
 
     public synchronized ChatMessagePayload sendChat(Long playerId, String rawText, long now) {
+        if (phase == GamePhase.RESULT) {
+            throw new GameActionException("INVALID", "종료된 게임에서는 채팅할 수 없습니다.");
+        }
+        if (phase == GamePhase.DEBATE) {
+            requireDebateOpenAt(now);
+        }
         PlayerState player = players.get(playerId);
         if (player == null) {
             throw new GameActionException("PLAYER_NOT_IN_ROOM", "방의 참가자가 아닙니다.");
@@ -246,7 +461,8 @@ public class RoomGameState {
         if (player.getRole() == LobbyRole.MODERATOR) {
             kind = "MODERATOR";
         } else {
-            if (speech == null || !playerId.toString().equals(speech.speakerId())) {
+            if (speech == null || !playerId.toString().equals(speech.speakerId())
+                    || now >= speech.endsAt()) {
                 throw new GameActionException("NOT_YOUR_TURN", "발언권이 있을 때만 채팅할 수 있습니다.");
             }
             kind = speech.kind();
@@ -267,46 +483,17 @@ public class RoomGameState {
     }
 
     public synchronized PendingRebuttalPayload requestRebuttal(
-            Long requesterId,
-            Long cardId,
-            long now
-    ) {
-        if (phase != GamePhase.DEBATE) {
-            throw new GameActionException("INVALID", "토론 중에만 반론을 요청할 수 있습니다.");
-        }
-
-        PlayerState requester = players.get(requesterId);
-        if (requester == null) {
-            throw new GameActionException("PLAYER_NOT_IN_ROOM", "방의 참가자가 아닙니다.");
-        }
-        if (requester.getRole() != LobbyRole.GUEST || requester.getStance() == null) {
-            throw new GameActionException("INVALID", "진영을 선택한 객원만 반론을 요청할 수 있습니다.");
-        }
-        if (speech == null || !"SPEECH".equals(speech.kind())
-                || requesterId.toString().equals(speech.speakerId())) {
-            throw new GameActionException("NO_TARGET", "반론할 상대의 발언이 없습니다.");
-        }
-        if (pendingRebuttal != null) {
-            throw new GameActionException("PENDING", "이미 처리 대기 중인 반론 요청이 있습니다.");
-        }
-
+            Long requesterId, Long cardId, long now) {
+        validateRebuttalCard(requesterId, cardId, now);
         CardPayload card = useCard(requesterId, cardId);
-
         pendingRebuttal = new PendingRebuttalPayload(
-                requesterId.toString(),
-                speech.speakerId(),
-                card.keyword()
-        );
+                requesterId.toString(), speech.speakerId(), card.keyword());
         pendingRebuttalCardId = cardId;
-
         return pendingRebuttal;
     }
 
-    public synchronized void decideRebuttal(
-            Long moderatorId,
-            boolean approve,
-            long now
-    ) {
+    /** Validate permission and deadline before restoring a denied card in the DB. */
+    public synchronized void validateRebuttalDecision(Long moderatorId, long now) {
         PlayerState moderator = players.get(moderatorId);
         if (moderator == null) {
             throw new GameActionException("PLAYER_NOT_IN_ROOM", "방의 참가자가 아닙니다.");
@@ -317,6 +504,16 @@ public class RoomGameState {
         if (phase != GamePhase.DEBATE || pendingRebuttal == null) {
             throw new GameActionException("INVALID", "결정할 반론 요청이 없습니다.");
         }
+        requireDebateOpenAt(now);
+    }
+
+    /** @return true when resolving the rebuttal also finishes the debate. */
+    public synchronized boolean decideRebuttal(
+            Long moderatorId,
+            boolean approve,
+            long now
+    ) {
+        validateRebuttalDecision(moderatorId, now);
 
         Long requesterId = Long.valueOf(pendingRebuttal.requesterId());
         String keyword = pendingRebuttal.keyword();
@@ -325,7 +522,7 @@ public class RoomGameState {
             speech = new RoomStatePayload.SpeechPayload(
                     requesterId.toString(),
                     "REBUTTAL",
-                    now + 60_000L,
+                    now + rebuttalSeconds * 1_000L,
                     keyword
             );
             lastSpeakerId = requesterId;
@@ -346,8 +543,9 @@ public class RoomGameState {
 
         pendingRebuttal = null;
         pendingRebuttalCardId = null;
+        return finishDebateIfCardsExhausted();
     }
-    
+
     public synchronized void restoreCard(Long playerId, Long cardId) {
         if (playerId == null || cardId == null) {
             return;

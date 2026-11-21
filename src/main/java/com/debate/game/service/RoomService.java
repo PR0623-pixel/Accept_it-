@@ -553,7 +553,9 @@ public class RoomService {
                         room.getTurnTimeLimit() * 60,
                         room.getMaxCardCount()
                 ),
-                gamePlayers
+                gamePlayers,
+                room.getSpeechSeconds(),
+                room.getRebuttalSeconds()
         );
 
         // DB 트랜잭션이 커밋된 경우에만 AFTER_COMMIT listener가 Store에 넣습니다.
@@ -562,46 +564,56 @@ public class RoomService {
         }
     }
 
+    /**
+     * S05: persist a moderator's item progression in one DB transaction.
+     *
+     * The websocket handler holds the RoomGameState monitor while calling this
+     * method. It changes the in-memory item/result ONLY after this method has
+     * returned successfully (the Spring transaction proxy has committed).
+     *
+     * expectedItemId prevents an out-of-date decision from changing the DB
+     * to a different round; nextItemId is null for the FINAL decision.
+     * The accepted/rejected results themselves remain in memory until S06.
+     */
     @Transactional
-    public void updateCurrentProcurementItem(String roomCode, Long procurementItemId) {
-        String code = roomCode == null
-                ? ""
+    public void commitItemProgress(
+            String roomCode,
+            Long expectedItemId,
+            Long nextItemId
+    ) {
+        String code = roomCode == null ? ""
                 : roomCode.strip().toUpperCase(Locale.ROOT);
-
-        if (!code.matches("[A-Z0-9]{6}") || procurementItemId == null) {
+        if (!code.matches("[A-Z0-9]{6}") || expectedItemId == null || expectedItemId <= 0) {
             throw new IllegalArgumentException("방 또는 물품 정보가 올바르지 않습니다.");
         }
-
-        Room room = roomRepository.findByRoomCodeForUpdate(code)
-                .orElseThrow(() -> new InvalidRoomCodeException("방을 찾을 수 없습니다."));
-
-        ProcurementItem item = procurementItemRepository.findById(procurementItemId)
-                .orElseThrow(() -> new IllegalArgumentException("물품을 찾을 수 없습니다."));
-
-        room.setCurrentProcurementItem(item);
-        room.setCurrentTopic(item.getTopicCategory());
-        room.setCurrentTurnRole(null);
-    }
-
-    @Transactional
-    public void finishGame(String roomCode) {
-        String code = roomCode == null
-                ? ""
-                : roomCode.strip().toUpperCase(Locale.ROOT);
-
-        if (!code.matches("[A-Z0-9]{6}")) {
-            throw new InvalidRoomCodeException("방을 찾을 수 없습니다.");
+        if (nextItemId != null && (nextItemId <= 0 || nextItemId.equals(expectedItemId))) {
+            throw new IllegalArgumentException("다음 물품 정보가 올바르지 않습니다.");
         }
 
         Room room = roomRepository.findByRoomCodeForUpdate(code)
                 .orElseThrow(() -> new InvalidRoomCodeException("방을 찾을 수 없습니다."));
-
         if (room.getStatus() != RoomStatus.IN_PROGRESS) {
-            throw new IllegalStateException("현재 진행 중인 방이 아닙니다.");
+            throw new IllegalStateException("이미 종료되었거나 진행 중이지 않은 방입니다.");
+        }
+        ProcurementItem current = room.getCurrentProcurementItem();
+        if (current == null || !expectedItemId.equals(current.getId())) {
+            throw new IllegalStateException("물품 진행 상태가 DB와 일치하지 않습니다.");
         }
 
-        room.setStatus(RoomStatus.FINISHED);
-        room.setCurrentTurnRole(null);
+        if (nextItemId == null) {
+            room.setStatus(RoomStatus.FINISHED);
+            room.setCurrentTurnRole(null);
+        } else {
+            ProcurementItem next = procurementItemRepository.findById(nextItemId)
+                    .orElseThrow(() -> new IllegalArgumentException("다음 물품을 찾을 수 없습니다."));
+            room.setCurrentProcurementItem(next);
+            room.setCurrentTopic(next.getTopicCategory());
+            room.setCurrentTurnRole(null);
+        }
+
+        // Catch constraint/SQL failures before returning; transaction commit
+        // still occurs at the proxy boundary before the caller updates memory.
+        roomRepository.saveAndFlush(room);
     }
 
     @Transactional(readOnly = true)

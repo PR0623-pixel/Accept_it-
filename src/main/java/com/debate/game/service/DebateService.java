@@ -53,27 +53,14 @@ public class DebateService {
                 room.getCurrentTurnRole(), room.getTurnTimeLimit(), logs);
     }
 
-    // 사회자 본인인지 확인한 뒤 방을 종료하고 이후 발언을 막는다.
-    @Transactional
+    // Legacy REST endpoint must not mark a room FINISHED mid-game.
+    // Only the final DECIDE_ITEM WebSocket action can commit the room status,
+    // coordinated with RoomGameState.RESULT. Full REST consolidation is S09.
+    @Deprecated
     public DebateStateResponse finishDebate(Long roomId, Long playerId) {
-        requireIdentifiers(roomId, playerId);
-        Room room = roomRepository.findByIdForUpdate(roomId)
-                .orElseThrow(() -> new IllegalArgumentException("방을 찾을 수 없습니다."));
-        Player player = playerRepository.findById(playerId)
-                .orElseThrow(() -> new IllegalArgumentException("플레이어를 찾을 수 없습니다."));
-        if (player.getRoom() == null || !player.getRoom().getId().equals(roomId)) {
-            throw new IllegalArgumentException("해당 방의 플레이어가 아닙니다.");
-        }
-        if (player.getRole() != LobbyRole.MODERATOR) {
-            throw new IllegalStateException("사회자만 토론을 종료할 수 있습니다.");
-        }
-        if (room.getStatus() != RoomStatus.IN_PROGRESS) {
-            throw new IllegalStateException("현재 토론이 진행 중인 방이 아닙니다.");
-        }
-
-        room.setStatus(RoomStatus.FINISHED);
-        room.setCurrentTurnRole(null);
-        return getState(roomId);
+        throw new IllegalStateException(
+                "인게임 토론 종료는 WebSocket END_DEBATE를 이용하세요. "
+                + "게임 완료는 마지막 DECIDE_ITEM에서만 처리합니다.");
     }
 
     // 일반 발언과 카드 체인의 공통 처리: 검증, 로그 저장, 다음 진영으로 차례 교대.

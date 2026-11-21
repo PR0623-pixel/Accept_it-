@@ -25,11 +25,13 @@ public interface SituationCardRepository extends JpaRepository<SituationCard, Lo
         where card.id = :cardId
         and card.room.id = :roomId
         and card.ownerRole = :ownerRole
+        and card.procurementItem.id = :procurementItemId
         and card.isUsed = false
         """)
     int markUsed(
             @Param("roomId") Long roomId,
             @Param("cardId") Long cardId,
+            @Param("procurementItemId") Long procurementItemId,
             @Param("ownerRole") DebateRole ownerRole
     );
 
@@ -40,11 +42,13 @@ public interface SituationCardRepository extends JpaRepository<SituationCard, Lo
         where card.id = :cardId
         and card.room.id = :roomId
         and card.ownerRole = :ownerRole
+        and card.procurementItem.id = :procurementItemId
         and card.isUsed = true
         """)
     int restoreUsedCard(
             @Param("roomId") Long roomId,
             @Param("cardId") Long cardId,
+            @Param("procurementItemId") Long procurementItemId,
             @Param("ownerRole") DebateRole ownerRole
     );
 }

@@ -160,10 +160,16 @@ public class LobbyWebSocketHandler extends TextWebSocketHandler {
                     }
                 }
 
-                Map<Long, List<CardPayload>> hands =
-                        roomService.dealCardsForGuests(source.roomCode(), guestStances);
-
-                hands.forEach(state::giveCards);
+                try {
+                    Map<Long, List<CardPayload>> hands =
+                            roomService.dealCardsForGuests(source.roomCode(), guestStances);
+                    state.giveHandsForDebate(hands);
+                } catch (RuntimeException failedDeal) {
+                    // A future DB card shortage must not trap this round in
+                    // DEBATE with incomplete hands. Allow the final vote to retry.
+                    state.rollbackUndealtDebateVote(source.playerId());
+                    throw failedDeal;
+                }
 
                 // 손패는 수신자 본인에게만 전달합니다.
                 for (ParticipantSocket connection : connections.values()) {
@@ -190,34 +196,34 @@ public class LobbyWebSocketHandler extends TextWebSocketHandler {
     }
 
     private void startSpeech(ParticipantSocket source, Long cardId) {
-        RoomGameState state = gameStateStore.find(source.roomCode())
-                .orElseThrow(() -> new GameActionException("INVALID", "진행 중인 게임 상태를 찾을 수 없습니다."));
-
-        RoomGameState.PlayerState player = state.getPlayers().get(source.playerId());
-        if(player == null || player.getStance() == null){
-            throw new GameActionException("INVALID", "진영을 선택한 객원만 발언할 수 있습니다.");
+        RoomGameState state = gameState(source);
+        // One room monitor spans validation, DB commit and in-memory commit.
+        // A rejected or duplicate request must never mark a persistent card used.
+        synchronized (state) {
+            long now = System.currentTimeMillis();
+            state.validateSpeechCard(source.playerId(), cardId, now);
+            DebateRole side = sideOf(state, source.playerId());
+            situationCardService.markUsed(source.roomCode(), cardId, side);
+            try {
+                state.startSpeech(source.playerId(), cardId, now);
+            } catch (RuntimeException failure) {
+                compensateCardUse(source.roomCode(), cardId, side, failure);
+                throw failure;
+            }
+            sendQuietly(source.socket(), "HAND", state.handFor(source.playerId()));
+            broadcastRoomState(source.roomCode());
         }
-
-        state.handFor(source.playerId()).stream()
-                .filter(c -> c.cardId() == cardId)
-                .findFirst()
-                .orElseThrow(() -> new GameActionException("CARD_REQUIRED", "본인 손패에 있는 카드를 선택해야 합니다."));
-
-        situationCardService.markUsed(
-                source.roomCode(),
-                cardId,
-                DebateRole.valueOf(player.getStance().name())
-        );
-
-        state.startSpeech(source.playerId(), cardId, System.currentTimeMillis());
-
-        sendQuietly(source.socket(), "HAND", state.handFor(source.playerId()));
-        broadcastRoomState(source.roomCode());
     }
 
     private void endSpeech(ParticipantSocket source) {
-        gameState(source).endSpeech(source.playerId());
-        broadcastRoomState(source.roomCode());
+        RoomGameState state = gameState(source);
+        synchronized (state) {
+            if (state.endSpeech(source.playerId())) {
+                broadcastDebateFinished(source.roomCode());
+            } else {
+                broadcastRoomState(source.roomCode());
+            }
+        }
     }
 
     private void sendChat(ParticipantSocket source, String text) {
@@ -229,23 +235,118 @@ public class LobbyWebSocketHandler extends TextWebSocketHandler {
         }
     }
     private void requestRebuttal(ParticipantSocket source, Long cardId) {
-        RoomGameState state = gameStateStore.find(source.roomCode()).orElseThrow(() -> new GameActionException(
-            "INVALID", "진행 중인 게임 상태를 찾을 수 없습니다."));
-        state.requestRebuttal(source.playerId(), cardId, System.currentTimeMillis());
-        sendQuietly(source.socket(), "HAND", state.handFor(source.playerId()));
-        broadcastRoomState(source.roomCode());
+        RoomGameState state = gameState(source);
+        synchronized (state) {
+            long now = System.currentTimeMillis();
+            state.validateRebuttalCard(source.playerId(), cardId, now);
+            DebateRole side = sideOf(state, source.playerId());
+            situationCardService.markUsed(source.roomCode(), cardId, side);
+            try {
+                state.requestRebuttal(source.playerId(), cardId, now);
+            } catch (RuntimeException failure) {
+                compensateCardUse(source.roomCode(), cardId, side, failure);
+                throw failure;
+            }
+            sendQuietly(source.socket(), "HAND", state.handFor(source.playerId()));
+            broadcastRoomState(source.roomCode());
+        }
     }
 
     private void decideRebuttal(ParticipantSocket source, boolean approve) {
         RoomGameState state = gameState(source);
-        state.decideRebuttal(source.playerId(), approve, System.currentTimeMillis());
-        broadcastRoomState(source.roomCode());
+        synchronized (state) {
+            long now = System.currentTimeMillis();
+            state.validateRebuttalDecision(source.playerId(), now);
+            var pending = state.getPendingRebuttal();
+            Long cardId = state.getPendingRebuttalCardId();
+            Long requesterId = Long.valueOf(pending.requesterId());
+            DebateRole side = sideOf(state, requesterId);
+            if (!approve) {
+                // Persist the returned card before clearing the pending request.
+                situationCardService.restore(source.roomCode(), cardId, side);
+            }
+            boolean finished;
+            try {
+                finished = state.decideRebuttal(source.playerId(), approve, now);
+            } catch (RuntimeException failure) {
+                if (!approve) {
+                    try {
+                        situationCardService.markUsed(source.roomCode(), cardId, side);
+                    } catch (RuntimeException compensationFailure) {
+                        failure.addSuppressed(compensationFailure);
+                    }
+                }
+                throw failure;
+            }
+            if (finished) {
+                broadcastDebateFinished(source.roomCode());
+                return;
+            }
+            if (!approve) {
+                sendPrivateHand(source.roomCode(), requesterId, state);
+            }
+            broadcastRoomState(source.roomCode());
+        }
     }
 
     private void endDebate(ParticipantSocket source) {
         RoomGameState state = gameState(source);
-        state.endDebate(source.playerId());
-        broadcastRoomState(source.roomCode());
+        synchronized (state) {
+            state.validateManualDebateEnd(source.playerId());
+            restorePendingRebuttalBeforeDebateEnd(state);
+            if (state.endDebate(source.playerId())) {
+                broadcastDebateFinished(source.roomCode());
+            }
+        }
+    }
+
+    /**
+     * Called with the room monitor held, before a manual/timer-driven debate end.
+     * Restore DB first so a persistence error leaves the pending request intact.
+     */
+    public void restorePendingRebuttalBeforeDebateEnd(RoomGameState state) {
+        var pending = state.getPendingRebuttal();
+        Long cardId = state.getPendingRebuttalCardId();
+        if (pending == null || cardId == null) return;
+        Long requesterId = Long.valueOf(pending.requesterId());
+        situationCardService.restore(state.getRoomCode(), cardId, sideOf(state, requesterId));
+    }
+
+    private static DebateRole sideOf(RoomGameState state, Long playerId) {
+        RoomGameState.PlayerState player = state.getPlayers().get(playerId);
+        if (player == null || player.getRole() != LobbyRole.GUEST || player.getStance() == null) {
+            throw new GameActionException("INVALID", "진영을 선택한 객원이 아닙니다.");
+        }
+        return DebateRole.valueOf(player.getStance().name());
+    }
+
+    private void compensateCardUse(String code, Long cardId, DebateRole side, RuntimeException failure) {
+        try {
+            situationCardService.restore(code, cardId, side);
+        } catch (RuntimeException compensationFailure) {
+            failure.addSuppressed(compensationFailure);
+        }
+    }
+
+    private void sendPrivateHand(String code, Long playerId, RoomGameState state) {
+        for (ParticipantSocket connection : connections.values()) {
+            if (code.equals(connection.roomCode()) && playerId.equals(connection.playerId())) {
+                sendQuietly(connection.socket(), "HAND", state.handFor(playerId));
+            }
+        }
+    }
+
+    /** Sends one new room snapshot plus each recipient's own hand after a debate ends. */
+    public void broadcastDebateFinished(String roomCode) {
+        RoomGameState state = gameStateStore.find(roomCode).orElse(null);
+        if (state == null) return;
+
+        broadcastRoomState(roomCode);
+        for (ParticipantSocket connection : connections.values()) {
+            if (roomCode.equals(connection.roomCode())) {
+                sendQuietly(connection.socket(), "HAND", state.handFor(connection.playerId()));
+            }
+        }
     }
 
     private void useCard(ParticipantSocket source, Long cardId) {
@@ -273,38 +374,24 @@ public class LobbyWebSocketHandler extends TextWebSocketHandler {
 
         synchronized (state) {
             int nextIndex = state.validateItemDecisionAndGetNextIndex(source.playerId());
+            Long expectedItemId = state.procurementItemIdAt(state.getCurrentItemIndex());
+            Long nextItemId = nextIndex < 0 ? null : state.procurementItemIdAt(nextIndex);
 
-            if (nextIndex >= 0) {
-                Long nextProcurementItemId = state.procurementItemIdAt(nextIndex);
-                roomService.updateCurrentProcurementItem(
-                        source.roomCode(),
-                        nextProcurementItemId
-                );
-            } else {
-                roomService.finishGame(source.roomCode());
-            }
+            // Commit DB progression before changing in-memory results/phase.
+            // Any failure sends ERROR to the requester without a false RESULT.
+            roomService.commitItemProgress(source.roomCode(), expectedItemId, nextItemId);
+            state.decideItem(source.playerId(), accept, System.currentTimeMillis());
 
-            state.decideItem(
-                    source.playerId(),
-                    accept,
-                    System.currentTimeMillis()
-            );
-        }
-
-        if (state.getPhase() == GamePhase.VOTING) {
+            // Keep the room monitor until delivery. A concurrent action must
+            // not overtake the ROUND/RESULT snapshot and personal hand reset.
             broadcastRoomState(source.roomCode());
-
             for (ParticipantSocket connection : connections.values()) {
                 if (!source.roomCode().equals(connection.roomCode())) {
                     continue;
                 }
-
-                sendQuietly(connection.socket(), "HAND",
-                        state.handFor(connection.playerId()));
+                sendQuietly(connection.socket(), "HAND", state.handFor(connection.playerId()));
                 sendQuietly(connection.socket(), "CHAT_HISTORY", List.of());
             }
-        } else {
-            broadcastRoomState(source.roomCode());
         }
     }
 

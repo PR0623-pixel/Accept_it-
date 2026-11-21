@@ -2,6 +2,7 @@ package com.debate.game.Ingame;
 
 import org.springframework.stereotype.Component;
 
+import java.util.List;
 import java.util.Optional;
 import java.util.concurrent.ConcurrentHashMap;
 import java.util.concurrent.ConcurrentMap;
@@ -18,6 +19,11 @@ public class RoomGameStateStore {
 
     public Optional<RoomGameState> find(String roomCode) {
         return Optional.ofNullable(states.get(roomCode));
+    }
+
+    /** Stable list for a timer sweep while rooms may be opened or closed. */
+    public List<RoomGameState> snapshot() {
+        return List.copyOf(states.values());
     }
 
     public void remove(String roomCode) {
