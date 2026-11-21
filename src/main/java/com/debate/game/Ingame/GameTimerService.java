@@ -32,6 +32,12 @@ public class GameTimerService {
                     continue;
                 }
                 try {
+                    // The global deadline cancels an undecided rebuttal. Restore
+                    // its reserved DB card before the state clears that request.
+                    if (state.getPhase() == com.debate.game.Ingame.enums.GamePhase.DEBATE
+                            && state.getItemEndsAt() != null && now >= state.getItemEndsAt()) {
+                        sockets.restorePendingRebuttalBeforeDebateEnd(state);
+                    }
                     RoomGameState.TimerOutcome outcome = state.expireTimers(now);
                     switch (outcome) {
                         case DEBATE_FINISHED -> sockets.broadcastDebateFinished(state.getRoomCode());

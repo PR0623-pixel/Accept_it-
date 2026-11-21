@@ -26,6 +26,7 @@ public class SituationCardService {
         int updated = situationCardRepository.markUsed(
                 room.getId(),
                 cardId,
+                currentItemId(room),
                 ownerRole
         );
 
@@ -45,6 +46,7 @@ public class SituationCardService {
         int updated = situationCardRepository.restoreUsedCard(
                 room.getId(),
                 cardId,
+                currentItemId(room),
                 ownerRole
         );
 
@@ -54,6 +56,13 @@ public class SituationCardService {
                     "사용한 카드를 복구할 수 없습니다."
             );
         }
+    }
+
+    private Long currentItemId(Room room) {
+        if (room.getCurrentProcurementItem() == null) {
+            throw new GameActionException("INVALID", "현재 진행 중인 물품이 없습니다.");
+        }
+        return room.getCurrentProcurementItem().getId();
     }
 
     private Room findRoom(String roomCode) {
